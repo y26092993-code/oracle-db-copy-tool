@@ -1,0 +1,58 @@
+# データベース接続設定
+# APPSプロジェクトの application.yaml を参考に作成
+# 複数のデータベース/スキーマ設定に対応
+
+# 複数データベース設定
+databases:
+  # デフォルトのデータベース
+  default:
+    user: jx
+    password: jx
+    host: localhost
+    port: 1521
+    service_name: jx
+    schema: jx  # 省略可能。指定しない場合はuserと同じ
+    min_pool_size: 1
+    max_pool_size: 10
+    increment: 1
+
+  # 開発用データベース
+  dev:
+    user: jx_dev
+    password: jx_dev
+    host: localhost
+    port: 1521
+    service_name: jx
+    schema: jx_dev
+    min_pool_size: 1
+    max_pool_size: 5
+    increment: 1
+
+  # テスト用データベース
+  test:
+    user: jx_test
+    password: jx_test
+    host: localhost
+    port: 1521
+    service_name: jx_test
+    schema: jx_test
+    min_pool_size: 1
+    max_pool_size: 3
+    increment: 1
+
+  # 本番用データベース（別スキーマ使用例）
+  prod:
+    user: jx_app
+    password: prod_password
+    host: prod-db-server
+    port: 1521
+    service_name: jx_prod
+    schema: jx_data  # 接続ユーザーと異なるスキーマを指定
+    min_pool_size: 2
+    max_pool_size: 20
+    increment: 2
+
+# ロギング設定
+logging:
+  level: INFO
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"

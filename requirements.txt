@@ -1,0 +1,31 @@
+# Oracle Connect Project - Python依存パッケージ
+# APPSプロジェクトのGradleビルド設定を参考に作成
+
+# Oracle データベース接続
+oracledb>=2.0.0
+
+# YAML設定ファイル読み込み
+PyYAML>=6.0
+
+# 型チェック（開発用）
+mypy>=1.0.0
+
+# コードフォーマット（開発用）
+black>=23.0.0
+
+# リンター（開発用）
+flake8>=6.0.0
+pylint>=3.0.0
+
+# テスト（開発用）
+pytest>=7.0.0
+pytest-cov>=4.0.0
+
+# ログ出力の拡張（オプション）
+colorlog>=6.0.0
+
+# CSV to Excel変換アプリ
+PySide6>=6.6.0
+openpyxl>=3.1.0
+pandas>=2.0.0
+chardet>=5.0.0
