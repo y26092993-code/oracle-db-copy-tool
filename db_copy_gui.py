@@ -376,7 +376,7 @@ class DBCopyToolGUI:
         self.object_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         
         vsb.config(command=self.object_tree.yview)
-        hsb.config(command=self.object_tree.xscroll)
+        hsb.config(command=self.object_tree.xview)
         
         # 列の設定
         self.object_tree.column("#0", width=50, minwidth=50, anchor="center")
