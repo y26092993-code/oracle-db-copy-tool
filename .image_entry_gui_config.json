@@ -1,0 +1,16 @@
+{
+  "recursive": true,
+  "mod11": false,
+  "checkdeji": true,
+  "output_csv": "image_linkage.csv",
+  "input_dir": "C:\\Users\\hiyok\\oracleConnect\\0001",
+  "form": "050",
+  "year": "507",
+  "ocr_backend": "easyocr (未インストール)",
+  "geom": {
+    "x": 780,
+    "y": 396,
+    "w": 1000,
+    "h": 600
+  }
+}

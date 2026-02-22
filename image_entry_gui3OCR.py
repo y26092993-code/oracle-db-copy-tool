@@ -202,20 +202,30 @@ class TaxpayerRecord:
     birth_date: str  # 生年月日
     
     def matches_search(self, query: str) -> bool:
-        """検索クエリにマッチするかチェック"""
+        """検索クエリにマッチするかチェック（日本語対応）"""
         if not query:
             return True
-        query_lower = query.lower()
+        # 日本語の場合はそのまま、英数字の場合は小文字化
+        query_normalized = query if any(ord(c) > 127 for c in query) else query.lower()
+        
+        def normalize_and_check(text: str) -> bool:
+            if not text:
+                return False
+            # 日本語を含む場合はそのまま、英数字のみの場合は小文字化
+            text_normalized = text if any(ord(c) > 127 for c in text) else text.lower()
+            return query_normalized in text_normalized
+        
         return (
-            query_lower in self.addressee_number.lower() or
-            query_lower in self.name.lower() or
-            query_lower in self.name_kana.lower() or
-            query_lower in self.address_prefecture.lower() or
-            query_lower in self.address_city.lower() or
-            query_lower in self.address_town.lower() or
-            query_lower in self.address_number.lower() or
-            query_lower in self.address_other.lower() or
-            query_lower in self.postal_code.lower()
+            normalize_and_check(self.addressee_number) or
+            normalize_and_check(self.name) or
+            normalize_and_check(self.name_kana) or
+            normalize_and_check(self.address_prefecture) or
+            normalize_and_check(self.address_city) or
+            normalize_and_check(self.address_town) or
+            normalize_and_check(self.address_number) or
+            normalize_and_check(self.address_other) or
+            normalize_and_check(self.postal_code) or
+            normalize_and_check(self.full_address)
         )
     
     @property
@@ -327,6 +337,12 @@ class PreviewLabel(QLabel):
         self.fit_to_window = True
         self.zoom = 1.0
         self.setMouseTracking(True)
+        
+        # 範囲選択機能用
+        self._selection_mode = False
+        self._selection_start = None
+        self._selection_rect = None
+        self._selection_active = False
 
     def set_image(self, pix: QPixmap, fit_to_window: bool = True, zoom: float = 1.0, preserve_view: bool = False) -> None:
         """Set the image to display.
@@ -345,6 +361,49 @@ class PreviewLabel(QLabel):
         else:
             self._center_or_clamp()
         self.update()
+    
+    def enable_selection_mode(self) -> None:
+        """範囲選択モードを有効にする。"""
+        self._selection_mode = True
+        self._selection_rect = None
+        self._selection_active = False
+        self.setCursor(Qt.CrossCursor)
+        self.update()
+    
+    def disable_selection_mode(self) -> None:
+        """範囲選択モードを無効にする。"""
+        self._selection_mode = False
+        self._selection_rect = None
+        self._selection_active = False
+        self.setCursor(Qt.ArrowCursor)
+        self.update()
+    
+    def get_selected_region(self):
+        """選択された領域をフルサイズ画像の座標で返す。
+        
+        Returns:
+            tuple: (x, y, width, height) または None
+        """
+        if not self._selection_rect or self._full_pixmap is None or self._scaled_pixmap is None:
+            return None
+        
+        # 表示座標からフルサイズ画像の座標に変換
+        scale_x = self._full_pixmap.width() / self._scaled_pixmap.width()
+        scale_y = self._full_pixmap.height() / self._scaled_pixmap.height()
+        
+        # オフセットを考慮した選択矩形の画像内座標
+        img_x = (self._selection_rect.x() - self._offset.x()) * scale_x
+        img_y = (self._selection_rect.y() - self._offset.y()) * scale_y
+        img_w = self._selection_rect.width() * scale_x
+        img_h = self._selection_rect.height() * scale_y
+        
+        # 画像範囲内にクリップ
+        img_x = max(0, min(img_x, self._full_pixmap.width()))
+        img_y = max(0, min(img_y, self._full_pixmap.height()))
+        img_w = max(0, min(img_w, self._full_pixmap.width() - img_x))
+        img_h = max(0, min(img_h, self._full_pixmap.height() - img_y))
+        
+        return (int(img_x), int(img_y), int(img_w), int(img_h))
 
     def _clamp_offset(self) -> None:
         """Clamp self._offset so the image stays within view bounds."""
@@ -411,6 +470,14 @@ class PreviewLabel(QLabel):
             return
         # draw pixmap at offset; if image larger than label, offset may be negative to pan
         painter.drawPixmap(self._offset, self._scaled_pixmap)
+        
+        # 範囲選択の描画
+        if self._selection_mode and self._selection_rect:
+            from PySide6.QtGui import QPen
+            pen = QPen(QColor(0, 120, 215), 2, Qt.DashLine)
+            painter.setPen(pen)
+            painter.setBrush(QBrush(QColor(0, 120, 215, 50)))
+            painter.drawRect(self._selection_rect)
 
     def resizeEvent(self, event) -> None:
         # when resized, recompute scaled pixmap if fit_to_window
@@ -421,6 +488,18 @@ class PreviewLabel(QLabel):
 
     def mousePressEvent(self, event) -> None:
         if event.button() == Qt.LeftButton:
+            # 範囲選択モードの場合
+            if self._selection_mode:
+                try:
+                    pos = event.position().toPoint()
+                except Exception:
+                    pos = event.pos()
+                self._selection_start = pos
+                self._selection_rect = None
+                self._selection_active = True
+                event.accept()
+                return
+            
             # start dragging only if image is larger than label
             if self._scaled_pixmap and (self._scaled_pixmap.width() > self.width() or self._scaled_pixmap.height() > self.height()):
                 self._dragging = True
@@ -435,6 +514,24 @@ class PreviewLabel(QLabel):
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event) -> None:
+        # 範囲選択中の場合
+        if self._selection_mode and self._selection_active and self._selection_start:
+            try:
+                cur_pos = event.position().toPoint()
+            except Exception:
+                cur_pos = event.pos()
+            
+            # 選択矩形を更新
+            from PySide6.QtCore import QRect
+            x = min(self._selection_start.x(), cur_pos.x())
+            y = min(self._selection_start.y(), cur_pos.y())
+            w = abs(cur_pos.x() - self._selection_start.x())
+            h = abs(cur_pos.y() - self._selection_start.y())
+            self._selection_rect = QRect(x, y, w, h)
+            self.update()
+            event.accept()
+            return
+        
         if self._dragging and self._scaled_pixmap:
             try:
                 cur_pos = event.position().toPoint()
@@ -469,11 +566,33 @@ class PreviewLabel(QLabel):
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event) -> None:
-        if event.button() == Qt.LeftButton and self._dragging:
-            self._dragging = False
-            self.setCursor(Qt.ArrowCursor)
-            event.accept()
-            return
+        if event.button() == Qt.LeftButton:
+            # 範囲選択モードの場合
+            if self._selection_mode and self._selection_active:
+                self._selection_active = False
+                # 範囲が選択されている場合、親ウィジェットにシグナルを送る
+                if self._selection_rect and self._selection_rect.width() > 5 and self._selection_rect.height() > 5:
+                    # 親ウィジェット(ImageEntryApp)のメソッドを直接呼び出す
+                    # window()を使ってトップレベルウィンドウを取得
+                    parent = self.window()
+                    if parent and hasattr(parent, 'on_region_selected'):
+                        region = self.get_selected_region()
+                        if region:
+                            try:
+                                parent.on_region_selected(region)
+                            except Exception as e:
+                                print(f"on_region_selected error: {e}")
+                                import traceback
+                                traceback.print_exc()
+                event.accept()
+                return
+            
+            # ドラッグモードの場合
+            if self._dragging:
+                self._dragging = False
+                self.setCursor(Qt.ArrowCursor)
+                event.accept()
+                return
         super().mouseReleaseEvent(event)
 
     def wheelEvent(self, event) -> None:
@@ -515,6 +634,276 @@ class OCRThread(QThread):
             self.finished.emit(text if text is not None else "")
         except Exception as exc:
             self.error.emit(str(exc))
+
+
+class FormListDialog(QDialog):
+    """帳票No一覧を編集するダイアログ"""
+    
+    # デフォルトの帳票No（削除不可）
+    DEFAULT_FORMS = ["住申：040", "給報：050", "年報：060"]
+    
+    def __init__(self, parent=None, current_list: List[str] = None):
+        super().__init__(parent)
+        self.setWindowTitle("帳票No 管理")
+        self.resize(500, 400)
+        
+        self.form_list = current_list.copy() if current_list else []
+        
+        # リストウィジェット
+        self.list_widget = QListWidget()
+        self.list_widget.addItems(self.form_list)
+        
+        # 編集用の入力フィールド
+        input_layout = QHBoxLayout()
+        self.name_input = QLineEdit()
+        self.name_input.setPlaceholderText("名称（例: 住申）")
+        self.code_input = QLineEdit()
+        self.code_input.setPlaceholderText("コード（例: 040）")
+        self.code_input.setMaxLength(3)
+        input_layout.addWidget(QLabel("名称:"))
+        input_layout.addWidget(self.name_input, 1)
+        input_layout.addWidget(QLabel("コード:"))
+        input_layout.addWidget(self.code_input)
+        
+        # ボタン
+        btn_layout = QHBoxLayout()
+        add_btn = QPushButton("追加")
+        edit_btn = QPushButton("修正")
+        delete_btn = QPushButton("削除")
+        up_btn = QPushButton("↑")
+        down_btn = QPushButton("↓")
+        
+        add_btn.clicked.connect(self.add_item)
+        edit_btn.clicked.connect(self.edit_item)
+        delete_btn.clicked.connect(self.delete_item)
+        up_btn.clicked.connect(self.move_up)
+        down_btn.clicked.connect(self.move_down)
+        
+        btn_layout.addWidget(add_btn)
+        btn_layout.addWidget(edit_btn)
+        btn_layout.addWidget(delete_btn)
+        btn_layout.addStretch()
+        btn_layout.addWidget(up_btn)
+        btn_layout.addWidget(down_btn)
+        
+        # OK/Cancelボタン
+        dialog_btn_layout = QHBoxLayout()
+        ok_btn = QPushButton("OK")
+        cancel_btn = QPushButton("キャンセル")
+        ok_btn.clicked.connect(self.accept)
+        cancel_btn.clicked.connect(self.reject)
+        dialog_btn_layout.addStretch()
+        dialog_btn_layout.addWidget(ok_btn)
+        dialog_btn_layout.addWidget(cancel_btn)
+        
+        # レイアウト
+        layout = QVBoxLayout(self)
+        layout.addWidget(QLabel("帳票No 一覧（形式: 名称：コード）"))
+        layout.addWidget(self.list_widget, 1)
+        layout.addLayout(input_layout)
+        layout.addLayout(btn_layout)
+        layout.addLayout(dialog_btn_layout)
+        
+        # リスト選択時に入力欄に反映
+        self.list_widget.currentItemChanged.connect(self.on_selection_changed)
+    
+    def on_selection_changed(self, current, previous):
+        """リスト選択時に入力欄に値を設定"""
+        if current:
+            text = current.text()
+            # "名称：コード" の形式から分解
+            if "：" in text:
+                parts = text.split("：")
+                if len(parts) == 2:
+                    self.name_input.setText(parts[0].strip())
+                    self.code_input.setText(parts[1].strip())
+    
+    def add_item(self):
+        """アイテムを追加"""
+        name = self.name_input.text().strip()
+        code = self.code_input.text().strip()
+        
+        if not name or not code:
+            QMessageBox.warning(self, "入力エラー", "名称とコードの両方を入力してください。")
+            return
+        
+        if not code.isdigit() or len(code) != 3:
+            QMessageBox.warning(self, "入力エラー", "コードは3桁の数字である必要があります。")
+            return
+        
+        item_text = f"{name}：{code}"
+        self.list_widget.addItem(item_text)
+        self.form_list.append(item_text)
+        
+        # 入力欄をクリア
+        self.name_input.clear()
+        self.code_input.clear()
+    
+    def edit_item(self):
+        """選択されたアイテムを修正"""
+        current = self.list_widget.currentItem()
+        if not current:
+            QMessageBox.information(self, "選択なし", "修正する項目を選択してください。")
+            return
+        
+        name = self.name_input.text().strip()
+        code = self.code_input.text().strip()
+        
+        if not name or not code:
+            QMessageBox.warning(self, "入力エラー", "名称とコードの両方を入力してください。")
+            return
+        
+        if not code.isdigit() or len(code) != 3:
+            QMessageBox.warning(self, "入力エラー", "コードは3桁の数字である必要があります。")
+            return
+        
+        item_text = f"{name}：{code}"
+        row = self.list_widget.row(current)
+        current.setText(item_text)
+        self.form_list[row] = item_text
+    
+    def delete_item(self):
+        """選択されたアイテムを削除"""
+        current = self.list_widget.currentItem()
+        if not current:
+            QMessageBox.information(self, "選択なし", "削除する項目を選択してください。")
+            return
+        
+        # デフォルトの帳票Noは削除不可
+        item_text = current.text()
+        if item_text in self.DEFAULT_FORMS:
+            QMessageBox.warning(self, "削除不可", f"デフォルトの帳票No（{item_text}）は削除できません。")
+            return
+        
+        row = self.list_widget.row(current)
+        self.list_widget.takeItem(row)
+        self.form_list.pop(row)
+    
+    def move_up(self):
+        """選択されたアイテムを上に移動"""
+        current = self.list_widget.currentItem()
+        if not current:
+            return
+        
+        row = self.list_widget.row(current)
+        if row > 0:
+            item = self.list_widget.takeItem(row)
+            self.list_widget.insertItem(row - 1, item)
+            self.list_widget.setCurrentRow(row - 1)
+            
+            self.form_list[row], self.form_list[row - 1] = self.form_list[row - 1], self.form_list[row]
+    
+    def move_down(self):
+        """選択されたアイテムを下に移動"""
+        current = self.list_widget.currentItem()
+        if not current:
+            return
+        
+        row = self.list_widget.row(current)
+        if row < self.list_widget.count() - 1:
+            item = self.list_widget.takeItem(row)
+            self.list_widget.insertItem(row + 1, item)
+            self.list_widget.setCurrentRow(row + 1)
+            
+            self.form_list[row], self.form_list[row + 1] = self.form_list[row + 1], self.form_list[row]
+    
+    def get_form_list(self) -> List[str]:
+        """編集後の帳票No一覧を取得"""
+        return self.form_list
+
+
+class OptionsDialog(QDialog):
+    """オプション設定ダイアログ"""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("オプション設定")
+        self.setModal(True)
+        self.setMinimumWidth(400)
+        self.parent_app = parent
+
+        layout = QVBoxLayout(self)
+        
+        # 納税義務者CSV選択
+        taxpayer_row = QHBoxLayout()
+        taxpayer_label = QLabel("納税義務者:")
+        taxpayer_row.addWidget(taxpayer_label)
+        self.taxpayer_path_label = QLabel("")
+        if parent and hasattr(parent, 'taxpayer_csv_path'):
+            self.taxpayer_path_label.setText(str(parent.taxpayer_csv_path))
+        taxpayer_row.addWidget(self.taxpayer_path_label, 1)
+        self.taxpayer_select_btn = QPushButton("選択...")
+        self.taxpayer_select_btn.clicked.connect(self._select_taxpayer_csv)
+        taxpayer_row.addWidget(self.taxpayer_select_btn)
+        layout.addLayout(taxpayer_row)
+
+        layout.addSpacing(10)
+
+        # 出力先選択
+        output_row = QHBoxLayout()
+        output_label = QLabel("出力先:")
+        output_row.addWidget(output_label)
+        self.output_path_label = QLabel("")
+        if parent and hasattr(parent, 'output_csv'):
+            self.output_path_label.setText(str(parent.output_csv))
+        output_row.addWidget(self.output_path_label, 1)
+        self.output_select_btn = QPushButton("選択...")
+        self.output_select_btn.clicked.connect(self._select_output)
+        output_row.addWidget(self.output_select_btn)
+        layout.addLayout(output_row)
+
+        layout.addSpacing(20)
+
+        # 管理ボタン群
+        self.show_settings_btn = QPushButton("設定表示")
+        self.show_settings_btn.clicked.connect(self._show_settings)
+        layout.addWidget(self.show_settings_btn)
+
+        self.reset_settings_btn = QPushButton("設定をリセット")
+        self.reset_settings_btn.clicked.connect(self._reset_settings)
+        layout.addWidget(self.reset_settings_btn)
+
+        self.manage_form_btn = QPushButton("帳票No管理")
+        self.manage_form_btn.clicked.connect(self._manage_form_list)
+        layout.addWidget(self.manage_form_btn)
+
+        layout.addStretch(1)
+
+        # 閉じるボタン
+        close_btn = QPushButton("閉じる")
+        close_btn.clicked.connect(self.accept)
+        layout.addWidget(close_btn)
+
+    def _select_taxpayer_csv(self):
+        """納税義務者CSV選択"""
+        if self.parent_app:
+            self.parent_app.select_taxpayer_csv()
+            # パス表示を更新
+            if hasattr(self.parent_app, 'taxpayer_csv_path'):
+                self.taxpayer_path_label.setText(str(self.parent_app.taxpayer_csv_path))
+
+    def _select_output(self):
+        """出力先選択"""
+        if self.parent_app:
+            self.parent_app.select_output()
+            # パス表示を更新
+            if hasattr(self.parent_app, 'output_csv'):
+                self.output_path_label.setText(str(self.parent_app.output_csv))
+
+    def _show_settings(self):
+        """設定表示"""
+        if self.parent_app:
+            self.parent_app.show_settings_dialog()
+
+    def _reset_settings(self):
+        """設定リセット"""
+        if self.parent_app:
+            self.parent_app.reset_settings()
+
+    def _manage_form_list(self):
+        """帳票No管理"""
+        if self.parent_app:
+            self.parent_app.manage_form_list()
 
 
 class OCRProgressDialog(QDialog):
@@ -623,7 +1012,7 @@ class ImageEntryApp(QWidget):
     def __init__(self, input_dir: Path, output_csv: Path) -> None:
         super().__init__()
         self.setWindowTitle("Image Entry")
-        self.resize(1000, 600)
+        self.resize(1200, 700)
 
         self.input_dir = input_dir
         self.output_csv = output_csv
@@ -648,9 +1037,13 @@ class ImageEntryApp(QWidget):
         # last item we explicitly styled (for fallback); used to reset styling when selection moves
         self._last_styled_item = None
         
-        # 納税義務者情報検索関連
+        # 納税義務者情報検索関連(デフォルトパス、設定で変更可能)
         self.taxpayer_records: List[TaxpayerRecord] = []
-        self.taxpayer_csv_path = Path("納税義務者情報.csv")
+        self.taxpayer_csv_path = Path("CSV/納税義務者情報.csv")
+        # 検索高速化用インデックス
+        self._taxpayer_by_year: Dict[str, List[TaxpayerRecord]] = {}
+        self._taxpayer_by_number: Dict[str, TaxpayerRecord] = {}
+        self._taxpayer_name_index: Dict[str, List[TaxpayerRecord]] = {}
 
         # UI
         self.list_widget = QListWidget()
@@ -698,13 +1091,9 @@ class ImageEntryApp(QWidget):
         # 資料連番: filled automatically after loading images (1..N)
         self.index_input = QLineEdit()
         self.addr_input = QLineEdit()
-        # Settings UI: show/reset buttons (追加)
-        self.show_settings_btn = QPushButton("設定表示")
-        self.reset_settings_btn = QPushButton("設定をリセット")
 
         select_btn = QPushButton("フォルダ選択")
         load_btn = QPushButton("フォルダ再読込")
-        output_btn = QPushButton("出力先選択")
         save_btn = QPushButton("CSV 出力")
         prev_btn = QPushButton("前へ")
         next_btn = QPushButton("次へ")
@@ -747,10 +1136,12 @@ class ImageEntryApp(QWidget):
             pass
         zoom_row.addWidget(fit_btn)
         zoom_row.addWidget(zoom_out_btn)
-        # OCR button near zoom controls for quick access
-        self.ocr_btn = QPushButton("OCR 実行")
-        self.ocr_btn.setFocusPolicy(Qt.NoFocus)
-        zoom_row.addWidget(self.ocr_btn)
+        
+        # 範囲選択OCRボタンを追加
+        self.ocr_region_btn = QPushButton("範囲選択OCR")
+        self.ocr_region_btn.setFocusPolicy(Qt.NoFocus)
+        self.ocr_region_btn.setCheckable(False)
+        zoom_row.addWidget(self.ocr_region_btn)
         # OCR backend selector (optional). Populate with available backends.
         try:
             self.ocr_backend_combo = QComboBox()
@@ -780,14 +1171,33 @@ class ImageEntryApp(QWidget):
             # default selection (will be overridden by load_settings if present)
             try:
                 # select first available backend if any, else 'none'
-                idx = 0
+                # easyocrを優先（Tesseract本体が不要で即座に使える）
+                idx = None
                 for i in range(self.ocr_backend_combo.count()):
                     d = self.ocr_backend_combo.itemData(i)
-                    if isinstance(d, (list, tuple)) and d[1]:
-                        idx = i
-                        break
-                self.ocr_backend_combo.setCurrentIndex(idx)
-                self.ocr_backend = self.ocr_backend_combo.itemData(idx)[0]
+                    if isinstance(d, (list, tuple)) and len(d) >= 2:
+                        backend_key, available = d[0], d[1]
+                        # easyocrが利用可能ならそれを選択
+                        if backend_key == 'easyocr' and available:
+                            idx = i
+                            break
+                        # それ以外で最初に利用可能なものを記憶
+                        if idx is None and available:
+                            idx = i
+                
+                # 何も見つからなければnoneを選択
+                if idx is None:
+                    for i in range(self.ocr_backend_combo.count()):
+                        d = self.ocr_backend_combo.itemData(i)
+                        if isinstance(d, (list, tuple)) and d[0] == 'none':
+                            idx = i
+                            break
+                
+                if idx is not None:
+                    self.ocr_backend_combo.setCurrentIndex(idx)
+                    self.ocr_backend = self.ocr_backend_combo.itemData(idx)[0]
+                else:
+                    self.ocr_backend = "none"
             except Exception:
                 self.ocr_backend = "none"
             # persist selection on change
@@ -801,7 +1211,7 @@ class ImageEntryApp(QWidget):
             self.ocr_backend_combo = None
 
         form_layout = QVBoxLayout()
-        # Top meta row: 業務 / 年度 / 帳票No / 管理No / 資料連番 横並び
+        # Top meta row: 業務 / 年度 / 帳票No 横並び（管理No/資料連番は非表示）
         meta_row = QHBoxLayout()
         meta_row.addWidget(QLabel("業務"))
         meta_row.addWidget(self.business_input)
@@ -811,12 +1221,9 @@ class ImageEntryApp(QWidget):
         meta_row.addSpacing(6)
         meta_row.addWidget(QLabel("帳票No"))
         meta_row.addWidget(self.form_combo)
-        meta_row.addSpacing(6)
-        meta_row.addWidget(QLabel("管理No"))
-        meta_row.addWidget(self.book_input)
-        meta_row.addSpacing(6)
-        meta_row.addWidget(QLabel("資料連番"))
-        meta_row.addWidget(self.index_input)
+        # 管理No/資料連番は内部的に保持するが非表示
+        self.book_input.setVisible(False)
+        self.index_input.setVisible(False)
         form_layout.addLayout(meta_row)
 
         # 検索機能の追加 - 宛名番号の上に配置
@@ -844,21 +1251,23 @@ class ImageEntryApp(QWidget):
         except Exception:
             pass
         addr_row.addWidget(self.addr_input, 1)
-        # Mod11 check option
-        self.mod11_checkbox = QCheckBox("モジュラス11チェック")
+        # Check digit options group
+        addr_row.addWidget(QLabel("チェックデジット("))
+        self.mod11_checkbox = QCheckBox("mod11")
         try:
             self.mod11_checkbox.setChecked(False)
         except Exception:
             pass
         addr_row.addWidget(self.mod11_checkbox)
-        
+        addr_row.addWidget(QLabel(","))
         # Check digit option (checkdeji2 style)
-        self.checkdeji_checkbox = QCheckBox("チェックデジット検証")
+        self.checkdeji_checkbox = QCheckBox("old")
         try:
             self.checkdeji_checkbox.setChecked(False)
         except Exception:
             pass
         addr_row.addWidget(self.checkdeji_checkbox)
+        addr_row.addWidget(QLabel(")"))
         form_layout.addLayout(addr_row)
 
         # remaining buttons: place navigation on single row
@@ -867,14 +1276,21 @@ class ImageEntryApp(QWidget):
         nav_row.addWidget(next_btn)
         form_layout.addLayout(nav_row)
 
-        # output/save below navigation
-        form_layout.addWidget(output_btn)
-        form_layout.addWidget(save_btn)
-        # settings buttons row
-        settings_row = QHBoxLayout()
-        settings_row.addWidget(self.show_settings_btn)
-        settings_row.addWidget(self.reset_settings_btn)
-        form_layout.addLayout(settings_row)
+        # データ出力とオプションボタンを横並び
+        save_btn.setText("データ出力")
+        options_btn = QPushButton("オプション")
+        
+        # オプションボタンの幅をOCR選択コンボボックスに合わせる
+        if hasattr(self, 'ocr_backend_combo') and self.ocr_backend_combo is not None:
+            try:
+                options_btn.setFixedWidth(self.ocr_backend_combo.sizeHint().width())
+            except Exception:
+                pass
+        
+        button_row = QHBoxLayout()
+        button_row.addWidget(save_btn)  # データ出力ボタンは伸縮
+        button_row.addWidget(options_btn)  # オプションボタンは固定幅
+        form_layout.addLayout(button_row)
 
         right_layout = QVBoxLayout()
         # preview (stretch), zoom controls under preview, then form
@@ -882,21 +1298,36 @@ class ImageEntryApp(QWidget):
         right_layout.addLayout(zoom_row)
         right_layout.addLayout(form_layout, 0)
 
-        splitter = QSplitter()
+        # 左右のウィジェットを直接配置（スプリッターなしで間隔を完全に詰める）
         left_widget = QWidget()
+        left_layout.setContentsMargins(4, 4, 0, 4)  # 右マージン0
+        left_layout.setSpacing(2)
         left_widget.setLayout(left_layout)
-        right_widget = QWidget()
-        right_widget.setLayout(right_layout)
-        splitter.addWidget(left_widget)
-        splitter.addWidget(right_widget)
+        # ファイル一覧の幅を最小限に制限（27文字 + 最小マージン）
         try:
-            splitter.setStretchFactor(0, 0)
-            splitter.setStretchFactor(1, 1)
-        except Exception:
-            pass
+            # フォントメトリクスを使用して正確な幅を計算
+            fm = self.list_widget.fontMetrics()
+            char_width = fm.averageCharWidth()
+            list_width = int(char_width * 27) + 8  # 27文字 + 最小マージン
+            left_widget.setMaximumWidth(list_width)
+            left_widget.setMinimumWidth(list_width)
+        except Exception as e:
+            # フォールバック: 固定幅
+            left_widget.setMaximumWidth(235)
+            left_widget.setMinimumWidth(235)
+        
+        right_widget = QWidget()
+        right_layout.setContentsMargins(0, 4, 4, 4)  # 左マージン0
+        right_layout.setSpacing(2)
+        right_widget.setLayout(right_layout)
 
         main_layout = QHBoxLayout(self)
-        main_layout.addWidget(splitter)
+        # メインレイアウトのマージンは0、スペーシングで1mm程度の間隔を作る
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(4)  # 約1mmの間隔
+        # スプリッターを使わず直接配置
+        main_layout.addWidget(left_widget)
+        main_layout.addWidget(right_widget, 1)  # 右側に伸縮性を持たせる
 
         # Signals
         select_btn.clicked.connect(self.select_folder)
@@ -923,22 +1354,17 @@ class ImageEntryApp(QWidget):
             self.year_input.editingFinished.connect(lambda: self.save_settings())
         except Exception:
             pass
-        # settings buttons
+        # オプションボタン
         try:
-            self.show_settings_btn.clicked.connect(self.show_settings_dialog)
-            self.reset_settings_btn.clicked.connect(self.reset_settings)
+            options_btn.clicked.connect(self.show_options_dialog)
         except Exception:
             pass
-        # connect OCR button
+        
+        # 範囲選択OCRボタンの接続
         try:
-            # connect to async runner to avoid UI freeze
-            self.ocr_btn.clicked.connect(self.perform_ocr_for_current_async)
+            self.ocr_region_btn.clicked.connect(self.start_region_selection_mode)
         except Exception:
-            # fallback to sync if connecting fails
-            try:
-                self.ocr_btn.clicked.connect(self.perform_ocr_for_current)
-            except Exception:
-                pass
+            pass
         try:
             self.addr_input.returnPressed.connect(self.on_addr_return_pressed)
         except Exception:
@@ -957,7 +1383,6 @@ class ImageEntryApp(QWidget):
         save_btn.clicked.connect(self.save_csv)
         prev_btn.clicked.connect(self.select_previous)
         next_btn.clicked.connect(self.select_next)
-        output_btn.clicked.connect(self.select_output)
         zoom_in_btn.clicked.connect(self.zoom_in)
         zoom_out_btn.clicked.connect(self.zoom_out)
         fit_btn.clicked.connect(self.fit_image)
@@ -972,6 +1397,45 @@ class ImageEntryApp(QWidget):
         
         # 納税義務者情報CSVを読み込み
         self.load_taxpayer_data()
+
+    def show_options_dialog(self) -> None:
+        """オプションダイアログを表示"""
+        dlg = OptionsDialog(self)
+        dlg.exec()
+
+    def manage_form_list(self) -> None:
+        """帳票No一覧を管理するダイアログを表示"""
+        current_list = []
+        for i in range(self.form_combo.count()):
+            current_list.append(self.form_combo.itemText(i))
+        
+        dlg = FormListDialog(self, current_list)
+        if dlg.exec() == QDialog.Accepted:
+            # 新しいリストを取得
+            new_list = dlg.get_form_list()
+            
+            # 現在選択されているコードを保存
+            current_code = self._form_code_from_label(self.form_combo.currentText())
+            
+            # コンボボックスを更新
+            self.form_combo.blockSignals(True)
+            try:
+                self.form_combo.clear()
+                for item in new_list:
+                    self.form_combo.addItem(item)
+                
+                # 以前の選択を復元（可能であれば）
+                if current_code:
+                    for i in range(self.form_combo.count()):
+                        if self._form_code_from_label(self.form_combo.itemText(i)) == current_code:
+                            self.form_combo.setCurrentIndex(i)
+                            break
+            finally:
+                self.form_combo.blockSignals(False)
+            
+            # 設定を保存
+            self._save_form_list(new_list)
+            self.save_settings()
 
     def show_settings_dialog(self) -> None:
         """Show current config file contents in a read-only dialog."""
@@ -1018,15 +1482,33 @@ class ImageEntryApp(QWidget):
         try:
             self.recursive_checkbox.blockSignals(True)
             self.mod11_checkbox.blockSignals(True)
+            self.checkdeji_checkbox.blockSignals(True)
             try:
                 self.recursive_checkbox.setChecked(True)
                 self.mod11_checkbox.setChecked(False)
+                self.checkdeji_checkbox.setChecked(False)
             finally:
                 self.recursive_checkbox.blockSignals(False)
                 self.mod11_checkbox.blockSignals(False)
+                self.checkdeji_checkbox.blockSignals(False)
             # reset output/input to initial values
             self.input_dir = Path(self._initial_input_dir)
             self.output_csv = Path(self._initial_output_csv)
+            
+            # reset form list to defaults
+            try:
+                default_forms = FormListDialog.DEFAULT_FORMS.copy()
+                self._save_form_list(default_forms)
+                self.form_combo.blockSignals(True)
+                try:
+                    self.form_combo.clear()
+                    for item in default_forms:
+                        self.form_combo.addItem(item)
+                finally:
+                    self.form_combo.blockSignals(False)
+            except Exception:
+                pass
+            
             # reset form and year
             try:
                 self._set_form_combo_by_code("050")
@@ -1035,7 +1517,7 @@ class ImageEntryApp(QWidget):
             self.year_input.setText(self._current_wareki_code())
             # apply geometry reset (center on screen with default size)
             try:
-                self.resize(1000, 600)
+                self.resize(1200, 700)
                 # optional: center
                 screen = QApplication.primaryScreen()
                 if screen is not None:
@@ -1054,6 +1536,184 @@ class ImageEntryApp(QWidget):
         except Exception:
             pass
 
+    def start_region_selection_mode(self) -> None:
+        """範囲選択モードを開始する。"""
+        try:
+            # 範囲選択モードを有効化
+            self.preview_label.enable_selection_mode()
+            self.ocr_region_btn.setText("選択中...")
+            self.ocr_region_btn.setEnabled(False)
+        except Exception as e:
+            logger.exception("範囲選択モード開始エラー")
+    
+    def on_region_selected(self, region: tuple) -> None:
+        """範囲が選択された時に呼ばれる。"""
+        try:
+            # 範囲選択モードを無効化
+            self.preview_label.disable_selection_mode()
+            self.ocr_region_btn.setText("範囲選択OCR")
+            self.ocr_region_btn.setEnabled(True)
+            
+            # OCRを実行
+            if region:
+                self.perform_region_ocr_async(region)
+        except Exception as e:
+            logger.exception("範囲選択完了エラー")
+            self.preview_label.disable_selection_mode()
+            self.ocr_region_btn.setText("範囲選択OCR")
+            self.ocr_region_btn.setEnabled(True)
+    
+    def perform_region_ocr_async(self, region: tuple) -> None:
+        """選択された範囲でOCRを非同期実行する。
+        
+        Args:
+            region: (x, y, width, height) のタプル
+        """
+        # 現在のレコードを取得
+        rec = None
+        if self._current_path is not None:
+            rec = next((r for r in self.records if r.path == self._current_path), None)
+        if rec is None:
+            cur = self.list_widget.currentItem()
+            if cur:
+                filename = cur.text()
+                rec = next((r for r in self.records if r.filename == filename), None)
+        if rec is None:
+            QMessageBox.information(self, "OCR", "対象の画像が選択されていません")
+            return
+        
+        # 一時的に切り出した画像を保存
+        try:
+            from PIL import Image
+            img = Image.open(str(rec.path))
+            x, y, w, h = region
+            
+            # 画像サイズの検証（yomitokuなどは最小サイズ要件がある）
+            if w < 10 or h < 10:
+                QMessageBox.warning(self, "範囲が小さすぎます", 
+                    f"選択範囲が小さすぎます ({w}x{h}px)。\nより大きな範囲を選択してください。")
+                return
+            
+            cropped = img.crop((x, y, x + w, y + h))
+            
+            # 一時ファイルに保存
+            import tempfile
+            with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp:
+                tmp_path = tmp.name
+                cropped.save(tmp_path)
+            
+            # 一時的なImageRecordを作成してOCR実行
+            from dataclasses import replace
+            temp_rec = replace(rec, path=Path(tmp_path))
+            
+            # 進捗ダイアログを表示
+            try:
+                self.ocr_region_btn.setEnabled(False)
+            except Exception:
+                pass
+            
+            try:
+                self._ocr_progress = OCRProgressDialog(self, message="範囲OCR実行中...")
+                self._ocr_progress.canceled.connect(self._cancel_ocr)
+                self._ocr_progress.show()
+            except Exception:
+                self._ocr_progress = None
+            
+            # ワーカースレッドを開始
+            try:
+                self._ocr_user_cancelled = False
+                self._ocr_thread = OCRThread(self, temp_rec)
+                self._ocr_thread.finished.connect(lambda text: self._on_region_ocr_finished(text, tmp_path))
+                self._ocr_thread.error.connect(lambda err: self._on_region_ocr_error(err, tmp_path))
+                try:
+                    self._ocr_thread.finished.connect(self._ocr_thread.deleteLater)
+                    self._ocr_thread.error.connect(self._ocr_thread.deleteLater)
+                except Exception:
+                    pass
+                self._ocr_thread.start()
+            except Exception as exc:
+                # クリーンアップ
+                try:
+                    if self._ocr_progress:
+                        self._ocr_progress.close()
+                except Exception:
+                    pass
+                try:
+                    self.ocr_region_btn.setEnabled(True)
+                except Exception:
+                    pass
+                try:
+                    Path(tmp_path).unlink()
+                except Exception:
+                    pass
+                logger.exception("範囲OCR スレッド開始に失敗しました")
+                QMessageBox.critical(self, "OCR エラー", f"範囲OCR スレッドの開始に失敗しました: {exc}")
+        
+        except Exception as e:
+            logger.exception("範囲OCR実行エラー")
+            QMessageBox.critical(self, "OCR エラー", f"範囲OCRの実行に失敗しました: {e}")
+    
+    def _on_region_ocr_finished(self, text: str, tmp_path: str) -> None:
+        """範囲OCR完了時の処理。"""
+        # 進捗ダイアログを閉じる
+        try:
+            if getattr(self, '_ocr_progress', None):
+                self._ocr_progress.close()
+        except Exception:
+            pass
+        try:
+            self.ocr_region_btn.setEnabled(True)
+        except Exception:
+            pass
+        
+        # 一時ファイルを削除
+        try:
+            Path(tmp_path).unlink()
+        except Exception:
+            pass
+        
+        # 結果ダイアログを表示
+        try:
+            self.show_ocr_result_dialog(text)
+        except Exception:
+            QMessageBox.information(self, "OCR", "処理は完了しましたが結果表示に失敗しました。")
+    
+    def _on_region_ocr_error(self, err: str, tmp_path: str) -> None:
+        """範囲OCRエラー時の処理。"""
+        try:
+            if getattr(self, '_ocr_progress', None):
+                self._ocr_progress.close()
+        except Exception:
+            pass
+        try:
+            self.ocr_region_btn.setEnabled(True)
+        except Exception:
+            pass
+        
+        # 一時ファイルを削除
+        try:
+            Path(tmp_path).unlink()
+        except Exception:
+            pass
+        
+        logger.error("範囲OCR 実行エラー: %s", err)
+        
+        # エラーメッセージを簡潔に
+        error_msg = err
+        if "Image size is too small" in err:
+            error_msg = "選択範囲が小さすぎます。より大きな範囲を選択してください。"
+        elif "YomiToku" in err and len(err) > 500:
+            # 長いスタックトレースを簡潔に
+            if "Image size is too small" in err:
+                error_msg = "YomiToku: 選択範囲が小さすぎます。より大きな範囲を選択してください。"
+            else:
+                error_msg = "YomiToku: OCR実行に失敗しました。別のOCRバックエンドを試してください。"
+        
+        try:
+            QMessageBox.critical(self, "OCR エラー", f"範囲OCR 実行中にエラーが発生しました:\n{error_msg}")
+        except Exception:
+            pass
+    
     def perform_ocr_for_current(self) -> None:
         """Run OCR for the currently shown image and show results in a dialog."""
         # determine current record
@@ -1411,6 +2071,42 @@ class ImageEntryApp(QWidget):
                         raise RuntimeError('YomiToku が出力を生成しませんでした')
                     out_file = matches[0]
                     ext = os.path.splitext(out_file)[1].lower()
+                    
+                    # 共通のクリーニング関数
+                    def clean_yomitoku_output(text: str) -> str:
+                        """yomitokuの出力をクリーニング"""
+                        import re
+                        
+                        # まず行ごとに処理
+                        lines = text.split('\n')
+                        cleaned_lines = []
+                        seen_lines = set()
+                        
+                        for line in lines:
+                            stripped = line.strip()
+                            
+                            # "horizontal" のみの行を完全に削除
+                            if stripped.lower() == 'horizontal':
+                                continue
+                            
+                            # horizontalを含むマーカーを削除
+                            stripped = re.sub(r'<horizontal[^>]*>.*?</horizontal>', '', stripped, flags=re.DOTALL | re.IGNORECASE)
+                            stripped = re.sub(r'\[horizontal\].*?\[/horizontal\]', '', stripped, flags=re.DOTALL | re.IGNORECASE)
+                            stripped = re.sub(r'^\s*horizontal:\s*', '', stripped, flags=re.IGNORECASE)
+                            stripped = re.sub(r'\bhorizontal\b', '', stripped, flags=re.IGNORECASE)
+                            stripped = stripped.strip()
+                            
+                            # 空行はスキップ
+                            if not stripped:
+                                continue
+                            
+                            # 重複行を削除（連続していなくても）
+                            if stripped not in seen_lines:
+                                cleaned_lines.append(stripped)
+                                seen_lines.add(stripped)
+                        
+                        return '\n'.join(cleaned_lines).strip()
+                    
                     if ext == '.json':
                         try:
                             with open(out_file, 'r', encoding='utf-8') as fh:
@@ -1421,7 +2117,10 @@ class ImageEntryApp(QWidget):
                         texts = []
                         def _collect_strings(o):
                             if isinstance(o, str):
-                                texts.append(o)
+                                # 各文字列からhorizontalを除去
+                                cleaned = o.strip()
+                                if cleaned.lower() != 'horizontal' and cleaned:
+                                    texts.append(cleaned)
                             elif isinstance(o, dict):
                                 for v in o.values():
                                     _collect_strings(v)
@@ -1429,12 +2128,14 @@ class ImageEntryApp(QWidget):
                                 for e in o:
                                     _collect_strings(e)
                         _collect_strings(doc)
-                        return '\n'.join(t for t in texts if t)
+                        raw_text = '\n'.join(texts)
+                        return clean_yomitoku_output(raw_text)
                     else:
                         # md/csv/html: return raw file content
                         try:
                             with open(out_file, 'r', encoding='utf-8', errors='replace') as fh:
-                                return fh.read()
+                                content = fh.read()
+                                return clean_yomitoku_output(content)
                         except Exception as exc:
                             raise RuntimeError(f'出力ファイルの読み取りに失敗しました: {exc}')
                 # if CLI not found or CLI failed above, try Python package API if available
@@ -1589,6 +2290,21 @@ class ImageEntryApp(QWidget):
                         self.output_csv = p
                 except Exception:
                     pass
+            # 帳票No一覧を読み込んでコンボボックスを更新
+            if "form_list" in data:
+                try:
+                    form_list = data.get("form_list", [])
+                    if isinstance(form_list, list) and form_list:
+                        self.form_combo.blockSignals(True)
+                        try:
+                            self.form_combo.clear()
+                            for item in form_list:
+                                self.form_combo.addItem(item)
+                        finally:
+                            self.form_combo.blockSignals(False)
+                except Exception:
+                    pass
+            
             if "form" in data:
                 try:
                     # block signals to avoid saving while applying
@@ -1629,9 +2345,23 @@ class ImageEntryApp(QWidget):
                         self.input_dir = d
                 except Exception:
                     pass
+            if "taxpayer_csv_path" in data:
+                try:
+                    csv_path = Path(data.get("taxpayer_csv_path"))
+                    if csv_path.exists():
+                        self.taxpayer_csv_path = csv_path
+                        self.load_taxpayer_data()
+                except Exception:
+                    pass
             if "ocr_backend" in data:
                 try:
                     val = str(data.get("ocr_backend", ""))
+                    # ラベル表示から実際のバックエンド名を抽出（例: "easyocr" または "pytesseract (未インストール)"）
+                    backend_key = val
+                    if " " in val:
+                        # ラベルに "(未インストール)" などが含まれる場合は最初の単語を取得
+                        backend_key = val.split()[0]
+                    
                     # apply to combo if present
                     if hasattr(self, 'ocr_backend_combo') and self.ocr_backend_combo is not None:
                         try:
@@ -1645,24 +2375,50 @@ class ImageEntryApp(QWidget):
                                     d = self.ocr_backend_combo.itemData(i)
                                     if isinstance(d, (list, tuple)) and len(d) > 0:
                                         try:
-                                            if str(d[0]) == val:
-                                                idx = i
-                                                break
+                                            if str(d[0]) == backend_key:
+                                                # 利用可能なバックエンドのみ選択
+                                                if len(d) >= 2 and d[1]:
+                                                    idx = i
+                                                    break
                                         except Exception:
                                             pass
+                                
+                                # 見つからない、または利用不可の場合は利用可能なものを自動選択
+                                if idx is None:
+                                    # easyocrを優先的に探す
+                                    for i in range(self.ocr_backend_combo.count()):
+                                        d = self.ocr_backend_combo.itemData(i)
+                                        if isinstance(d, (list, tuple)) and len(d) >= 2:
+                                            if d[0] == 'easyocr' and d[1]:
+                                                idx = i
+                                                break
+                                    
+                                    # easyocrがなければ他の利用可能なものを探す
+                                    if idx is None:
+                                        for i in range(self.ocr_backend_combo.count()):
+                                            d = self.ocr_backend_combo.itemData(i)
+                                            if isinstance(d, (list, tuple)) and len(d) >= 2:
+                                                if d[1]:  # 利用可能
+                                                    idx = i
+                                                    break
+                                
                                 if idx is not None:
                                     self.ocr_backend_combo.setCurrentIndex(idx)
+                                    self.ocr_backend = self.ocr_backend_combo.itemData(idx)[0]
                                 else:
-                                    # fallback for legacy values: try to set by visible text
-                                    try:
-                                        self.ocr_backend_combo.setCurrentText(val)
-                                    except Exception:
-                                        pass
+                                    # noneを選択
+                                    for i in range(self.ocr_backend_combo.count()):
+                                        d = self.ocr_backend_combo.itemData(i)
+                                        if isinstance(d, (list, tuple)) and d[0] == 'none':
+                                            self.ocr_backend_combo.setCurrentIndex(i)
+                                            self.ocr_backend = 'none'
+                                            break
                             finally:
                                 self.ocr_backend_combo.blockSignals(False)
                         except Exception:
                             pass
-                    self.ocr_backend = val
+                    else:
+                        self.ocr_backend = backend_key
                 except Exception:
                     pass
         except Exception:
@@ -1673,16 +2429,28 @@ class ImageEntryApp(QWidget):
 
         We persist only a minimal set: recursive, mod11, checkdeji, output_csv, input_dir.
         """
+        # OCRバックエンドキーを取得（ラベルではなくキーを保存）
+        ocr_backend_key = getattr(self, 'ocr_backend', 'none')
+        if hasattr(self, 'ocr_backend_combo') and self.ocr_backend_combo is not None:
+            try:
+                idx = self.ocr_backend_combo.currentIndex()
+                data = self.ocr_backend_combo.itemData(idx)
+                if isinstance(data, (list, tuple)) and len(data) > 0:
+                    ocr_backend_key = str(data[0])
+            except Exception:
+                pass
+        
         data = {
             "recursive": bool(self.recursive_checkbox.isChecked()),
             "mod11": bool(self.mod11_checkbox.isChecked()),
             "checkdeji": bool(self.checkdeji_checkbox.isChecked()),
             "output_csv": str(self.output_csv) if self.output_csv is not None else "",
             "input_dir": str(self.input_dir) if self.input_dir is not None else "",
+            "taxpayer_csv_path": str(self.taxpayer_csv_path) if self.taxpayer_csv_path is not None else "",
             "form": self._form_code_from_label(self.form_combo.currentText()),
             "year": str(self.year_input.text()).strip(),
-            # OCR backend selection (pytesseract | easyocr | none)
-            "ocr_backend": (str(self.ocr_backend_combo.currentText()) if hasattr(self, 'ocr_backend_combo') and self.ocr_backend_combo is not None else getattr(self, 'ocr_backend', '')),
+            # OCR backend selection (pytesseract | easyocr | none) - キーのみ保存
+            "ocr_backend": ocr_backend_key,
             "geom": {
                 "x": int(self.geometry().x()),
                 "y": int(self.geometry().y()),
@@ -1693,57 +2461,53 @@ class ImageEntryApp(QWidget):
         success = False
         original_config_path = self.config_path
         
-        # Try current config path first
-        try:
-            with self.config_path.open("w", encoding="utf-8") as fh:
-                json.dump(data, fh, ensure_ascii=False, indent=2)
-            # mark hidden where applicable (best-effort)
+        # 保存を試みるパスのリスト（優先順位順）
+        try_paths = [self.config_path]
+        # フォールバック先を追加
+        try_paths.extend([
+            Path.cwd() / ".image_entry_gui_config.json",
+            Path(tempfile.gettempdir()) / "image_entry_gui_config.json",
+            Path(__file__).resolve().parent / ".image_entry_gui_config.json"
+        ])
+        
+        # 各パスを順番に試す
+        for try_path in try_paths:
             try:
-                _set_hidden(self.config_path)
-            except Exception:
-                pass
-            success = True
-        except PermissionError:
-            # Permission denied - try alternative paths
-            logger.warning(f"設定ファイルの保存権限がありません: {self.config_path}")
-        except Exception as e:
-            logger.warning(f"設定ファイルの保存でエラー: {e}")
-            
-        # If initial save failed, try fallback locations
-        if not success:
-            fallback_paths = [
-                Path.home() / ".image_entry_gui_config.json",
-                Path.cwd() / ".image_entry_gui_config.json", 
-                Path(tempfile.gettempdir()) / ".image_entry_gui_config.json"
-            ]
-            
-            for fallback_path in fallback_paths:
+                # 親ディレクトリが存在することを確認
+                try_path.parent.mkdir(parents=True, exist_ok=True)
+                
+                with try_path.open("w", encoding="utf-8") as fh:
+                    json.dump(data, fh, ensure_ascii=False, indent=2)
+                
+                # 保存成功
+                if try_path != self.config_path:
+                    self.config_path = try_path
+                    # 初回のみログ出力（毎回出力すると煩雑）
+                    if not success:
+                        logger.info(f"設定を保存しました: {self.config_path}")
+                
+                # mark hidden where applicable (best-effort)
                 try:
-                    # Skip if it's the same path we already tried
-                    if fallback_path.resolve() == original_config_path.resolve():
-                        continue
-                        
-                    with fallback_path.open("w", encoding="utf-8") as fh:
-                        json.dump(data, fh, ensure_ascii=False, indent=2)
-                    
-                    # Update config path for future use
-                    self.config_path = fallback_path
-                    
-                    # mark hidden where applicable (best-effort)
-                    try:
-                        _set_hidden(self.config_path)
-                    except Exception:
-                        pass
-                        
-                    logger.info(f"設定を代替場所に保存しました: {self.config_path}")
-                    success = True
-                    break
+                    if try_path.name.startswith('.'):
+                        _set_hidden(try_path)
                 except Exception:
-                    continue
+                    pass
+                
+                success = True
+                break
+                
+            except PermissionError:
+                # 権限エラーは次のパスを試す
+                continue
+            except Exception as e:
+                # その他のエラーも次のパスを試す
+                continue
                     
         if not success:
-            # All attempts failed - log but don't interrupt UI
-            logger.error("すべての設定保存場所でエラーが発生しました。設定は保存されません。")
+            # すべて失敗した場合のみエラーログ（1回だけ）
+            if not hasattr(self, '_save_error_shown'):
+                logger.error("設定ファイルを保存できませんでした。アプリケーションは動作しますが、設定は保存されません。")
+                self._save_error_shown = True
 
     def _get_config_path(self) -> Path:
         """Get configuration file path with multiple fallback locations.
@@ -1839,9 +2603,42 @@ class ImageEntryApp(QWidget):
             return 2024  # デフォルト値
 
     def _load_form_list(self) -> List[str]:
-        """Try to load a form list from a few candidate files, else return fallback list."""
-        # For this project the allowed 帳票No values are fixed per spec
-        return ["住申：040", "給報：050", "年報：060"]
+        """Try to load a form list from settings or return fallback list."""
+        # Try to load from settings
+        try:
+            if self.config_path.exists():
+                with self.config_path.open("r", encoding="utf-8") as fh:
+                    data = json.load(fh)
+                    if "form_list" in data and isinstance(data["form_list"], list):
+                        return data["form_list"]
+        except Exception:
+            pass
+        # Fallback to default list
+        return FormListDialog.DEFAULT_FORMS.copy()
+    
+    def _save_form_list(self, form_list: List[str]) -> None:
+        """Save form list to settings."""
+        try:
+            # Load existing settings
+            data = {}
+            if self.config_path.exists():
+                try:
+                    with self.config_path.open("r", encoding="utf-8") as fh:
+                        data = json.load(fh)
+                except Exception:
+                    pass
+            
+            # Update form_list
+            data["form_list"] = form_list
+            
+            # Save
+            try:
+                with self.config_path.open("w", encoding="utf-8") as fh:
+                    json.dump(data, fh, ensure_ascii=False, indent=2)
+            except Exception:
+                pass
+        except Exception:
+            logger.exception("帳票No一覧の保存に失敗しました")
 
     def _form_code_from_label(self, label: str) -> str:
         """Extract the numeric form code (3 digits) from a label like '住申：040' -> '040'."""
@@ -2347,7 +3144,7 @@ class ImageEntryApp(QWidget):
 
             # Create ZIP of all output images preserving the hierarchy
             try:
-                zip_name = f"{out_path.stem}_images.zip"
+                zip_name = "JA.zip"
                 zip_path = out_path.parent / zip_name
                 # write files into the zip with stored arcname
                 with zipfile.ZipFile(str(zip_path), 'w', compression=zipfile.ZIP_DEFLATED) as zf:
@@ -2360,7 +3157,7 @@ class ImageEntryApp(QWidget):
             except Exception:
                 logger.exception("ZIP 作成中にエラーが発生しました")
 
-            QMessageBox.information(self, "保存完了", f"CSV を保存しました: {out_path}")
+            QMessageBox.information(self, "保存完了", f"保存完了\n\n保存先: {out_path.parent}")
         except Exception as exc:
             logger.exception("CSV 保存中にエラー")
             QMessageBox.critical(self, "エラー", f"CSV 保存に失敗しました: {exc}")
@@ -2519,6 +3316,79 @@ class ImageEntryApp(QWidget):
             except Exception:
                 pass
 
+    def select_taxpayer_csv(self) -> None:
+        """納税義務者情報CSVを選択するダイアログを表示する。"""
+        initial_dir = str(self.taxpayer_csv_path.parent) if self.taxpayer_csv_path.exists() else "CSV"
+        path, _ = QFileDialog.getOpenFileName(
+            self, 
+            "納税義務者情報CSVを選択", 
+            initial_dir, 
+            "CSV Files (*.csv);;All Files (*)"
+        )
+        if path:
+            csv_path = Path(path)
+            if not csv_path.exists():
+                QMessageBox.warning(self, "エラー", f"ファイルが見つかりません: {csv_path}")
+                return
+            
+            # CSVパスを更新
+            self.taxpayer_csv_path = csv_path
+            
+            # CSVを読み込み
+            try:
+                self.load_taxpayer_data()
+                record_count = len(self.taxpayer_records)
+                QMessageBox.information(
+                    self, 
+                    "納税義務者情報CSV設定", 
+                    f"納税義務者情報CSVを設定しました:\n{self.taxpayer_csv_path}\n\n読み込み件数: {record_count:,}件"
+                )
+            except Exception as e:
+                QMessageBox.critical(
+                    self, 
+                    "読み込みエラー", 
+                    f"CSVの読み込みに失敗しました:\n{e}"
+                )
+                return
+            
+            # 設定を保存
+            try:
+                self.save_settings()
+            except Exception:
+                pass
+
+    def _build_search_indexes(self) -> None:
+        """検索高速化用のインデックスを構築する。"""
+        try:
+            self._taxpayer_by_year.clear()
+            self._taxpayer_by_number.clear()
+            self._taxpayer_name_index.clear()
+            
+            for record in self.taxpayer_records:
+                # 年度別インデックス
+                if record.tax_year:
+                    try:
+                        year_key = str(int(record.tax_year))
+                        if year_key not in self._taxpayer_by_year:
+                            self._taxpayer_by_year[year_key] = []
+                        self._taxpayer_by_year[year_key].append(record)
+                    except ValueError:
+                        pass
+                
+                # 宛名番号インデックス（完全一致用）
+                if record.addressee_number:
+                    self._taxpayer_by_number[record.addressee_number] = record
+                
+                # 氏名インデックス（部分一致用）
+                if record.name:
+                    name_lower = record.name.lower()
+                    if name_lower not in self._taxpayer_name_index:
+                        self._taxpayer_name_index[name_lower] = []
+                    self._taxpayer_name_index[name_lower].append(record)
+                    
+        except Exception as e:
+            print(f"インデックス構築エラー: {e}")
+    
     def load_taxpayer_data(self) -> None:
         """納税義務者情報CSVを読み込む。"""
         try:
@@ -2553,13 +3423,16 @@ class ImageEntryApp(QWidget):
                         print(f"レコード解析エラー: {e}")
                         continue
             
+            # 検索高速化用のインデックスを構築
+            self._build_search_indexes()
+            
             print(f"納税義務者情報を {len(self.taxpayer_records)} 件読み込みました。")
         except Exception as e:
             print(f"納税義務者情報の読み込みに失敗しました: {e}")
             QMessageBox.warning(self, "読み込みエラー", f"納税義務者情報の読み込みに失敗しました:\n{e}")
 
     def perform_search(self) -> None:
-        """検索を実行して結果を表示する。"""
+        """検索を実行して結果を表示する（高速化版）。"""
         try:
             query = self.search_input.text().strip()
             if not query:
@@ -2571,20 +3444,34 @@ class ImageEntryApp(QWidget):
             current_wareki = self.year_input.text().strip()
             target_year = self._wareki_to_seireki(current_wareki) if current_wareki else None
             
-            # 検索実行
+            # 年度でフィルタリングしたレコードリストを取得
+            if target_year:
+                year_key = str(target_year)
+                search_pool = self._taxpayer_by_year.get(year_key, [])
+            else:
+                search_pool = self.taxpayer_records
+            
             matching_records = []
-            for record in self.taxpayer_records:
-                # 年度フィルタリング（税年度が一致する場合のみ）
-                if target_year and record.tax_year:
-                    try:
-                        record_year = int(record.tax_year)
-                        if record_year != target_year:
-                            continue  # 年度が一致しない場合はスキップ
-                    except ValueError:
-                        continue  # 年度が数値でない場合はスキップ
-                
-                if record.matches_search(query):
+            max_results = 50  # 最大検索件数（パフォーマンス向上のため）
+            
+            # 段階1: 宛名番号での完全一致検索（最速）
+            if query.isdigit() and query in self._taxpayer_by_number:
+                record = self._taxpayer_by_number[query]
+                if not target_year or (record.tax_year and int(record.tax_year) == target_year):
                     matching_records.append(record)
+            
+            # 段階2: 十分な結果が見つからない場合は部分一致検索
+            if len(matching_records) < max_results:
+                for record in search_pool:
+                    if len(matching_records) >= max_results:
+                        break  # 早期終了
+                    
+                    # 既に追加済みのレコードはスキップ
+                    if record in matching_records:
+                        continue
+                    
+                    if record.matches_search(query):
+                        matching_records.append(record)
             
             # 結果表示
             self.search_results.clear()
@@ -2593,7 +3480,9 @@ class ImageEntryApp(QWidget):
                     # 生年月日を和暦表示で含む表示文字列
                     wareki_birth = record.get_wareki_birth_date()
                     birth_info = f" [{wareki_birth}]" if wareki_birth else ""
-                    display_text = f"{record.addressee_number} - {record.name}{birth_info} ({record.full_address})"
+                    # 氏名（振り仮名）を追加
+                    kana_info = f"（{record.name_kana}）" if record.name_kana else ""
+                    display_text = f"{record.addressee_number} - {record.name}{kana_info}{birth_info} ({record.full_address})"
                     item = QListWidgetItem(display_text)
                     item.setData(Qt.UserRole, record)  # レコードデータを保存
                     self.search_results.addItem(item)
