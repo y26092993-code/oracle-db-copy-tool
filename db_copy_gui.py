@@ -9,6 +9,8 @@ import threading
 from typing import Dict, List, Optional
 import logging
 from datetime import datetime
+import yaml
+import os
 
 from db_manager import (
     DatabaseManager,
@@ -837,13 +839,125 @@ class DBCopyToolGUI:
 
     def _save_config(self) -> None:
         """設定を保存。"""
-        # TODO: 設定ファイルへの保存機能
-        messagebox.showinfo("情報", "設定の保存機能は未実装です")
+        # パスワード保存の警告
+        save_password = messagebox.askyesno(
+            "設定保存の確認",
+            "接続設定を保存します。\n\n"
+            "⚠️ パスワードは平文で保存されます。\n"
+            "セキュリティ上のリスクがあります。\n\n"
+            "パスワードを含めて保存しますか？\n\n"
+            "※「いいえ」を選択するとパスワード以外を保存します。"
+        )
+        
+        try:
+            config = {
+                "source": {
+                    "host": self.entries["source_host"].get().strip(),
+                    "port": self.entries["source_port"].get().strip(),
+                    "service": self.entries["source_service"].get().strip(),
+                    "username": self.entries["source_username"].get().strip(),
+                },
+                "target": {
+                    "host": self.entries["target_host"].get().strip(),
+                    "port": self.entries["target_port"].get().strip(),
+                    "service": self.entries["target_service"].get().strip(),
+                    "username": self.entries["target_username"].get().strip(),
+                }
+            }
+            
+            # パスワードを保存する場合
+            if save_password:
+                config["source"]["password"] = self.entries["source_password"].get()
+                config["target"]["password"] = self.entries["target_password"].get()
+            
+            # ファイルダイアログで保存先を選択
+            filename = filedialog.asksaveasfilename(
+                title="設定ファイルを保存",
+                defaultextension=".yaml",
+                filetypes=[
+                    ("YAML ファイル", "*.yaml"),
+                    ("すべてのファイル", "*.*")
+                ],
+                initialfile="db_connection_config.yaml"
+            )
+            
+            if filename:
+                with open(filename, 'w', encoding='utf-8') as f:
+                    yaml.dump(config, f, allow_unicode=True, default_flow_style=False)
+                
+                self._log(f"設定を保存しました: {filename}", "success")
+                messagebox.showinfo("成功", f"設定ファイルを保存しました\n\n{filename}")
+        
+        except Exception as e:
+            error_msg = f"設定保存エラー: {str(e)}"
+            self._log(error_msg, "error")
+            logging.error(error_msg, exc_info=True)
+            messagebox.showerror("エラー", error_msg)
 
     def _load_config(self) -> None:
         """設定を読込。"""
-        # TODO: 設定ファイルからの読込機能
-        messagebox.showinfo("情報", "設定の読込機能は未実装です")
+        try:
+            # ファイルダイアログで読み込むファイルを選択
+            filename = filedialog.askopenfilename(
+                title="設定ファイルを開く",
+                filetypes=[
+                    ("YAML ファイル", "*.yaml"),
+                    ("すべてのファイル", "*.*")
+                ]
+            )
+            
+            if not filename:
+                return
+            
+            with open(filename, 'r', encoding='utf-8') as f:
+                config = yaml.safe_load(f)
+            
+            # ソースDB設定を読み込み
+            if "source" in config:
+                source = config["source"]
+                self.entries["source_host"].delete(0, tk.END)
+                self.entries["source_host"].insert(0, source.get("host", ""))
+                
+                self.entries["source_port"].delete(0, tk.END)
+                self.entries["source_port"].insert(0, source.get("port", "1521"))
+                
+                self.entries["source_service"].delete(0, tk.END)
+                self.entries["source_service"].insert(0, source.get("service", ""))
+                
+                self.entries["source_username"].delete(0, tk.END)
+                self.entries["source_username"].insert(0, source.get("username", ""))
+                
+                if "password" in source:
+                    self.entries["source_password"].delete(0, tk.END)
+                    self.entries["source_password"].insert(0, source["password"])
+            
+            # ターゲットDB設定を読み込み
+            if "target" in config:
+                target = config["target"]
+                self.entries["target_host"].delete(0, tk.END)
+                self.entries["target_host"].insert(0, target.get("host", ""))
+                
+                self.entries["target_port"].delete(0, tk.END)
+                self.entries["target_port"].insert(0, target.get("port", "1521"))
+                
+                self.entries["target_service"].delete(0, tk.END)
+                self.entries["target_service"].insert(0, target.get("service", ""))
+                
+                self.entries["target_username"].delete(0, tk.END)
+                self.entries["target_username"].insert(0, target.get("username", ""))
+                
+                if "password" in target:
+                    self.entries["target_password"].delete(0, tk.END)
+                    self.entries["target_password"].insert(0, target["password"])
+            
+            self._log(f"設定を読み込みました: {filename}", "success")
+            messagebox.showinfo("成功", f"設定ファイルを読み込みました\n\n{filename}")
+        
+        except Exception as e:
+            error_msg = f"設定読込エラー: {str(e)}"
+            self._log(error_msg, "error")
+            logging.error(error_msg, exc_info=True)
+            messagebox.showerror("エラー", error_msg)
 
     def _clear_log(self) -> None:
         """ログをクリア。"""
