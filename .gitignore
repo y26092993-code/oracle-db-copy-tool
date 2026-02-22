@@ -5,7 +5,7 @@ __pycache__/
 *.so
 *.egg
 *.egg-info/
-dist/
+# dist/  # 実行ファイル配布のため追加
 build/
 *.spec.bak
 
