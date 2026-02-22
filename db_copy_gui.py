@@ -31,7 +31,7 @@ class DBCopyToolGUI:
         """
         self.root = root
         self.root.title("Oracle DB オブジェクトコピーツール")
-        self.root.geometry("1000x700")
+        self.root.geometry("1000x950")
         
         # ロギング設定
         self._setup_logging()
@@ -369,6 +369,7 @@ class DBCopyToolGUI:
             tree_container,
             columns=("name", "type", "created", "updated"),
             show="tree headings",
+            height=20,
             yscrollcommand=vsb.set,
             xscrollcommand=hsb.set,
             selectmode="extended"
