@@ -1,5 +1,76 @@
 # Oracle Connect Project
 
+## oracle.py - SQLファイル一括実行アプリケーション
+
+指定フォルダ内の SQLファイル（`*.sql`）をアルファベット順に OracleDB へ一括実行するツールです。
+
+### ファイル構成
+
+```
+python/
+├── oracle.py          # メインアプリケーション（SQLファイル一括実行）
+├── config.yaml        # 接続設定ファイルのサンプル
+├── requirements.txt   # 必要なPythonパッケージ
+└── sql/               # 実行するSQLファイルを格納するディレクトリ（例）
+    ├── 01_create.sql
+    └── 02_insert.sql
+```
+
+### セットアップ
+
+```powershell
+# 依存パッケージのインストール
+pip install -r requirements.txt
+```
+
+### 設定ファイル（config.yaml）の編集
+
+```yaml
+database:
+  host: localhost         # ホスト名
+  port: 1521              # ポート番号
+  service_name: ORCL      # サービス名（または sid: ORCL）
+  user: your_username     # ユーザー名
+  password: your_password # パスワード
+```
+
+### コマンドライン引数
+
+| 引数 | 説明 | デフォルト |
+|------|------|----------|
+| `--config` | YAML設定ファイルのパス（必須） | - |
+| `--sql-dir` | SQLファイルが格納されているディレクトリ（必須） | - |
+| `--error-mode` | エラー時の動作: `stop`（確認後継続/中断）または `continue`（スキップ） | `stop` |
+| `--autocommit` | 自動コミット: `true` または `false` | `true` |
+| `--log-dir` | ログファイル出力先ディレクトリ | `./logs` |
+
+### 使用例
+
+```bash
+# 基本的な使用方法（エラー時中断、自動コミット有効）
+python oracle.py --config config.yaml --sql-dir ./sql
+
+# エラーを無視して続行、自動コミット無効
+python oracle.py --config config.yaml --sql-dir ./sql --error-mode continue --autocommit false
+
+# ログ出力先を指定
+python oracle.py --config config.yaml --sql-dir ./sql --log-dir ./my_logs
+```
+
+### ログ出力
+
+- ログは標準出力とファイルの両方に出力されます。
+- ログファイル名: `logs/oracle_execution_YYYYMMDD_HHMMSS.log`
+- 各SQLファイルの実行結果（成功/失敗）、エラーメッセージ、実行開始・終了時刻を記録します。
+
+### エラーハンドリング
+
+- **中断モード（`--error-mode stop`）**: エラー発生時にユーザーへ継続/終了を確認します。
+- **無視モード（`--error-mode continue`）**: エラーをログに記録して次のファイルへ進みます。
+- エラー発生時は自動的にロールバックを実行します。
+
+---
+
 APPSプロジェクトを参考に作成したPython版Oracle接続アプリケーションです。
 
 ## プロジェクト構成
