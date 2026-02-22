@@ -1,0 +1,10 @@
+# Oracle DB オブジェクトコピーツール 必要なパッケージ
+
+# Oracle データベース接続
+oracledb>=2.0.0
+
+# PyYAML（設定ファイル読み込み用、オプション）
+PyYAML>=6.0
+
+# PyInstaller（実行ファイル作成用）
+pyinstaller>=6.0.0
