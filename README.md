@@ -262,6 +262,36 @@ mypy src/ examples/
 pytest tests/ -v --cov=src
 ```
 
+## 実行ファイル（EXE）の作成
+
+### クイックビルド
+
+```powershell
+# ビルドスクリプトを実行
+.\build.bat
+```
+
+### 配布パッケージの作成
+
+```powershell
+# 配布用ZIPファイルを作成
+.\create_package.bat
+```
+
+### 手動ビルド
+
+```powershell
+# PyInstallerでビルド
+pyinstaller ImageEntryGUI3.spec --clean
+```
+
+詳細は[BUILD_INSTRUCTIONS.md](BUILD_INSTRUCTIONS.md)を参照してください。
+
+### 成果物
+
+- `dist\ImageEntryGUI3.exe` - ワンファイル版実行ファイル（約50MB）
+- `dist\ImageEntryGUI3\` - ワンフォルダ版（高速起動）
+
 ## ライセンス
 
 Copyright (c) 2025 Oracle Connect Project.
