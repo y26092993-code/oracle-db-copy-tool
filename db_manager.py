@@ -57,6 +57,8 @@ class DatabaseObject:
     object_type: ObjectType
     owner: str
     status: Optional[str] = None
+    created: Optional[str] = None
+    last_ddl_time: Optional[str] = None
 
 
 @dataclass
@@ -232,14 +234,18 @@ class DatabaseManager:
                 if obj_type == ObjectType.PACKAGE:
                     # パッケージとパッケージボディを両方取得
                     query = """
-                        SELECT object_name, object_type, owner, status
+                        SELECT object_name, object_type, owner, status,
+                               TO_CHAR(created, 'YYYY-MM-DD HH24:MI:SS') as created,
+                               TO_CHAR(last_ddl_time, 'YYYY-MM-DD HH24:MI:SS') as last_ddl_time
                         FROM user_objects
                         WHERE object_type IN ('PACKAGE', 'PACKAGE BODY')
                         ORDER BY object_name, object_type
                     """
                 else:
                     query = f"""
-                        SELECT object_name, object_type, owner, status
+                        SELECT object_name, object_type, owner, status,
+                               TO_CHAR(created, 'YYYY-MM-DD HH24:MI:SS') as created,
+                               TO_CHAR(last_ddl_time, 'YYYY-MM-DD HH24:MI:SS') as last_ddl_time
                         FROM user_objects
                         WHERE object_type = '{obj_type.value}'
                         ORDER BY object_name
@@ -248,7 +254,7 @@ class DatabaseManager:
                 cursor.execute(query)
                 
                 for row in cursor:
-                    obj_name, obj_type_str, owner, status = row
+                    obj_name, obj_type_str, owner, status, created, last_ddl_time = row
                     
                     # object_typeの変換
                     try:
@@ -260,7 +266,9 @@ class DatabaseManager:
                         name=obj_name,
                         object_type=obj_type_enum,
                         owner=owner,
-                        status=status
+                        status=status,
+                        created=created,
+                        last_ddl_time=last_ddl_time
                     ))
                 
                 logging.info(f"{obj_type.value}: {len([o for o in objects if o.object_type == obj_type])} 件")
@@ -458,7 +466,8 @@ class DatabaseManager:
         object_types: List[ObjectType],
         drop_before_create: bool = True,
         skip_errors: bool = True,
-        name_patterns: Optional[List[str]] = None
+        name_patterns: Optional[List[str]] = None,
+        specific_objects: Optional[List[DatabaseObject]] = None
     ) -> List[CopyResult]:
         """オブジェクトをコピー。
         
@@ -467,14 +476,19 @@ class DatabaseManager:
             drop_before_create: 作成前に削除するか
             skip_errors: エラー発生時も続行するか
             name_patterns: オブジェクト名のフィルタパターン
+            specific_objects: 特定のオブジェクトリスト（指定された場合はこれを使用）
             
         Returns:
             コピー結果のリスト
         """
         results: List[CopyResult] = []
         
-        # オブジェクト一覧取得
-        objects = self.get_source_objects(object_types, name_patterns)
+        # オブジェクト一覧取得（specific_objectsが指定されていない場合）
+        if specific_objects is not None:
+            objects = specific_objects
+        else:
+            objects = self.get_source_objects(object_types, name_patterns)
+        
         logging.info(f"コピー対象: {len(objects)} 件")
         
         for obj in objects:

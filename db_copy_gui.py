@@ -12,6 +12,7 @@ from datetime import datetime
 
 from db_manager import (
     DatabaseManager,
+    DatabaseObject,
     ObjectType,
     CopyResult,
     ConnectionConfig
@@ -323,30 +324,80 @@ class DBCopyToolGUI:
         
         ttk.Button(
             toolbar,
-            text="一覧を更新",
-            command=self._refresh_object_list
+            text="フィルタして一覧を取得",
+            command=self._refresh_object_list,
+            width=20
         ).pack(side=tk.LEFT, padx=5)
         
-        ttk.Label(toolbar, text="フィルタ:").pack(side=tk.LEFT, padx=5)
-        self.filter_entry = ttk.Entry(toolbar, width=30)
-        self.filter_entry.pack(side=tk.LEFT, padx=5)
-        self.filter_entry.bind('<KeyRelease>', lambda e: self._apply_filter())
+        ttk.Button(
+            toolbar,
+            text="すべて選択",
+            command=self._select_all_objects,
+            width=15
+        ).pack(side=tk.LEFT, padx=5)
         
-        # リストボックスとスクロールバー
-        list_container = ttk.Frame(list_frame)
-        list_container.pack(fill=tk.BOTH, expand=True)
+        ttk.Button(
+            toolbar,
+            text="すべて解除",
+            command=self._deselect_all_objects,
+            width=15
+        ).pack(side=tk.LEFT, padx=5)
         
-        scrollbar = ttk.Scrollbar(list_container)
-        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        ttk.Label(
+            toolbar,
+            text="表示フィルタ:",
+            font=("", 8)
+        ).pack(side=tk.LEFT, padx=(10, 5))
         
-        self.object_listbox = tk.Listbox(
-            list_container,
-            yscrollcommand=scrollbar.set,
-            selectmode=tk.EXTENDED,
-            font=("Courier", 9)
+        self.display_filter_entry = ttk.Entry(toolbar, width=25)
+        self.display_filter_entry.pack(side=tk.LEFT, padx=5)
+        self.display_filter_entry.bind('<KeyRelease>', lambda e: self._apply_display_filter())
+        
+        # Treeviewとスクロールバー
+        tree_container = ttk.Frame(list_frame)
+        tree_container.pack(fill=tk.BOTH, expand=True)
+        
+        # スクロールバー
+        vsb = ttk.Scrollbar(tree_container, orient="vertical")
+        vsb.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        hsb = ttk.Scrollbar(tree_container, orient="horizontal")
+        hsb.pack(side=tk.BOTTOM, fill=tk.X)
+        
+        # Treeview作成
+        self.object_tree = ttk.Treeview(
+            tree_container,
+            columns=("name", "type", "created", "updated"),
+            show="tree headings",
+            yscrollcommand=vsb.set,
+            xscrollcommand=hsb.set,
+            selectmode="extended"
         )
-        self.object_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        scrollbar.config(command=self.object_listbox.yview)
+        self.object_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        
+        vsb.config(command=self.object_tree.yview)
+        hsb.config(command=self.object_tree.xscroll)
+        
+        # 列の設定
+        self.object_tree.column("#0", width=50, minwidth=50, anchor="center")
+        self.object_tree.column("name", width=250, minwidth=150, anchor="w")
+        self.object_tree.column("type", width=120, minwidth=100, anchor="center")
+        self.object_tree.column("created", width=150, minwidth=120, anchor="center")
+        self.object_tree.column("updated", width=150, minwidth=120, anchor="center")
+        
+        # ヘッダーの設定
+        self.object_tree.heading("#0", text="✓", anchor="center")
+        self.object_tree.heading("name", text="オブジェクト名", anchor="w")
+        self.object_tree.heading("type", text="種類", anchor="center")
+        self.object_tree.heading("created", text="作成日", anchor="center")
+        self.object_tree.heading("updated", text="更新日", anchor="center")
+        
+        # チェックボックスのクリックイベント
+        self.object_tree.bind("<Button-1>", self._on_tree_click)
+        
+        # オブジェクトデータを保持（フィルタ用）
+        self.all_objects: List[DatabaseObject] = []
+        self.object_check_states: Dict[str, bool] = {}  # オブジェクトIDごとのチェック状態
 
     def _create_execution_tab(self) -> None:
         """実行とログタブを作成。"""
@@ -490,10 +541,17 @@ class DBCopyToolGUI:
             # オブジェクト一覧取得
             objects = self.db_manager.get_source_objects(selected_types, name_patterns)
             
-            # リストボックスに表示
-            self.object_listbox.delete(0, tk.END)
+            # オブジェクトデータを保存
+            self.all_objects = objects
+            
+            # チェック状態を初期化（すべて選択状態）
+            self.object_check_states.clear()
             for obj in objects:
-                self.object_listbox.insert(tk.END, f"{obj.object_type.name:<12} {obj.name}")
+                obj_id = f"{obj.object_type.value}:{obj.name}"
+                self.object_check_states[obj_id] = True
+            
+            # Treeviewに表示
+            self._display_objects(objects)
             
             self._log(f"✓ {len(objects)} 個のオブジェクトを取得しました", "success")
         
@@ -503,10 +561,93 @@ class DBCopyToolGUI:
             logging.error(error_msg, exc_info=True)
             messagebox.showerror("エラー", error_msg)
 
+    def _display_objects(self, objects: List[DatabaseObject]) -> None:
+        """オブジェクトをTreeviewに表示。
+        
+        Args:
+            objects: 表示するオブジェクトのリスト
+        """
+        # 既存項目をクリア
+        for item in self.object_tree.get_children():
+            self.object_tree.delete(item)
+        
+        # オブジェクトを表示
+        for obj in objects:
+            obj_id = f"{obj.object_type.value}:{obj.name}"
+            is_checked = self.object_check_states.get(obj_id, True)
+            check_mark = "☑" if is_checked else "☐"
+            
+            self.object_tree.insert(
+                "",
+                "end",
+                iid=obj_id,
+                text=check_mark,
+                values=(
+                    obj.name,
+                    obj.object_type.value,
+                    obj.created or "N/A",
+                    obj.last_ddl_time or "N/A"
+                )
+            )
+
+    def _on_tree_click(self, event) -> None:
+        """Treeviewのクリックイベント処理（チェックボックストグル）。
+        
+        Args:
+            event: クリックイベント
+        """
+        region = self.object_tree.identify("region", event.x, event.y)
+        
+        if region == "tree":
+            # チェックボックス列がクリックされた
+            item = self.object_tree.identify_row(event.y)
+            if item:
+                # チェック状態をトグル
+                obj_id = item
+                current_state = self.object_check_states.get(obj_id, True)
+                new_state = not current_state
+                self.object_check_states[obj_id] = new_state
+                
+                # 表示を更新
+                check_mark = "☑" if new_state else "☐"
+                self.object_tree.item(item, text=check_mark)
+
+    def _select_all_objects(self) -> None:
+        """すべてのオブジェクトを選択。"""
+        for item in self.object_tree.get_children():
+            self.object_check_states[item] = True
+            self.object_tree.item(item, text="☑")
+        
+        self._log("すべてのオブジェクトを選択しました")
+
+    def _deselect_all_objects(self) -> None:
+        """すべてのオブジェクトの選択を解除。"""
+        for item in self.object_tree.get_children():
+            self.object_check_states[item] = False
+            self.object_tree.item(item, text="☐")
+        
+        self._log("すべてのオブジェクトの選択を解除しました")
+
+    def _apply_display_filter(self) -> None:
+        """表示フィルタを適用（Treeviewの表示フィルタ）。"""
+        filter_text = self.display_filter_entry.get().strip().upper()
+        
+        if not filter_text:
+            # フィルタなし：すべてのオブジェクトを表示
+            self._display_objects(self.all_objects)
+        else:
+            # フィルタあり：マッチするオブジェクトのみ表示
+            filtered_objects = [
+                obj for obj in self.all_objects
+                if filter_text in obj.name.upper() or filter_text in obj.object_type.value.upper()
+            ]
+            self._display_objects(filtered_objects)
+
     def _apply_filter(self) -> None:
         """表示フィルタを適用（リストボックスの表示のみ）。"""
         # 注: これは表示フィルタのみ。実際のコピーには影響しない。
         # 実際のコピーフィルタはワイルドカードパターン欄で指定する。
+        # 新しいTreeview実装では_apply_display_filterが使用される
         pass
 
     def _execute_copy(self) -> None:
@@ -515,33 +656,49 @@ class DBCopyToolGUI:
             messagebox.showwarning("警告", "先に接続テストを実行してください")
             return
         
-        # 選択されたオブジェクトタイプ
-        selected_types = [
-            obj_type for obj_type, var in self.object_vars.items()
-            if var.get()
-        ]
+        # 選択されたオブジェクトを取得
+        selected_objects = self._get_selected_objects()
         
-        if not selected_types:
-            messagebox.showwarning("警告", "少なくとも1つのオブジェクトタイプを選択してください")
+        if not selected_objects:
+            messagebox.showwarning("警告", "コピーするオブジェクトを選択してください")
             return
         
         # 確認ダイアログ
-        type_names = ", ".join([t.name for t in selected_types])
-        message = f"以下のオブジェクトをコピーします:\n\n{type_names}\n\n続行しますか？"
+        obj_count = len(selected_objects)
+        type_counts = {}
+        for obj in selected_objects:
+            type_name = obj.object_type.value
+            type_counts[type_name] = type_counts.get(type_name, 0) + 1
+        
+        type_summary = "\n".join([f"  {name}: {count}件" for name, count in sorted(type_counts.items())])
+        message = f"以下のオブジェクトをコピーします:\n\n{type_summary}\n\n合計: {obj_count}件\n\n続行しますか？"
         
         if not messagebox.askyesno("確認", message):
             return
         
         # 別スレッドで実行
-        thread = threading.Thread(target=self._execute_copy_thread, args=(selected_types,))
+        thread = threading.Thread(target=self._execute_copy_thread, args=(selected_objects,))
         thread.daemon = True
         thread.start()
 
-    def _execute_copy_thread(self, object_types: List[ObjectType]) -> None:
+    def _get_selected_objects(self) -> List[DatabaseObject]:
+        """選択されたオブジェクトを取得。
+        
+        Returns:
+            選択されたDatabaseObjectのリスト
+        """
+        selected = []
+        for obj in self.all_objects:
+            obj_id = f"{obj.object_type.value}:{obj.name}"
+            if self.object_check_states.get(obj_id, False):
+                selected.append(obj)
+        return selected
+
+    def _execute_copy_thread(self, selected_objects: List[DatabaseObject]) -> None:
         """コピーを実行（スレッド）。
         
         Args:
-            object_types: コピーするオブジェクトタイプ
+            selected_objects: コピーする選択されたオブジェクト
         """
         self.root.after(0, self._set_executing_state, True)
         
@@ -550,17 +707,14 @@ class DBCopyToolGUI:
             self._log("コピー処理を開始します...")
             self._log("=" * 60)
             
-            # ワイルドカードパターンを取得
-            name_patterns = self._get_name_patterns()
-            if name_patterns:
-                self._log(f"フィルタパターン: {', '.join(name_patterns)}")
+            self._log(f"コピー対象: {len(selected_objects)}件のオブジェクト")
             
-            # コピー実行
+            # コピー実行（specific_objectsパラメータで選択されたオブジェクトを渡す）
             results = self.db_manager.copy_objects(
-                object_types=object_types,
+                object_types=[],  # specific_objectsを使うため不要
                 drop_before_create=self.drop_before_create.get(),
                 skip_errors=self.skip_errors.get(),
-                name_patterns=name_patterns
+                specific_objects=selected_objects
             )
             
             # 結果をログに表示
