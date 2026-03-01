@@ -1,3 +1,0 @@
-# Minimal requirements for PDFtoTIFF.py
-pymupdf>=1.23.0
-pillow>=10.0.0
