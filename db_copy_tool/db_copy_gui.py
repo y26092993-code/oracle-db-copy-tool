@@ -33,7 +33,7 @@ class DBCopyToolGUI:
         """
         self.root = root
         self.root.title("Oracle DB オブジェクトコピーツール")
-        self.root.geometry("1000x700")
+        self.root.geometry("1200x900")
         
         # ロギング設定
         self._setup_logging()
@@ -99,7 +99,7 @@ class DBCopyToolGUI:
 
     def _create_connection_tab(self) -> None:
         """接続設定タブを作成。"""
-        # tnsnames.ora 読み込みボタン
+        # tnsnames.ora 読 込みボタン
         tns_toolbar = ttk.Frame(self.connection_frame)
         tns_toolbar.grid(row=0, column=0, padx=10, pady=(10, 5), sticky="ew")
         
@@ -124,13 +124,49 @@ class DBCopyToolGUI:
             width=20
         ).pack(side=tk.LEFT, padx=5)
         
+        ttk.Button(
+            tns_toolbar,
+            text="読み込み結果を表示",
+            command=self._show_tnsnames_entries,
+            width=20
+        ).pack(side=tk.LEFT, padx=5)
+        
+        # tnsnames.ora 読み込み結果表示エリア
+        if self.tns_parser and self.tns_parser.has_tnsnames() and len(self.tns_parser.get_entries()) > 0:
+            tns_info_frame = ttk.LabelFrame(
+                self.connection_frame,
+                text="tnsnames.ora エントリ一覧",
+                padding=5
+            )
+            tns_info_frame.grid(row=1, column=0, padx=10, pady=5, sticky="ewns")
+            
+            # スクロール可能なテキスト表示
+            tns_text = scrolledtext.ScrolledText(
+                tns_info_frame,
+                height=8,
+                width=80,
+                wrap=tk.WORD,
+                state=tk.DISABLED
+            )
+            tns_text.pack(fill=tk.BOTH, expand=True)
+            
+            # エントリ情報をテキストに挿入
+            tns_text.config(state=tk.NORMAL)
+            tns_text.delete('1.0', tk.END)
+            tns_text.insert(tk.END, self.tns_parser.display_entries())
+            tns_text.config(state=tk.DISABLED)
+            
+            source_row = 2
+        else:
+            source_row = 1
+        
         # ソースDB設定
         source_frame = ttk.LabelFrame(
             self.connection_frame,
             text="ソースデータベース（コピー元）",
             padding=10
         )
-        source_frame.grid(row=1, column=0, padx=10, pady=10, sticky="ew")
+        source_frame.grid(row=source_row, column=0, padx=10, pady=10, sticky="ew")
         
         self._create_db_fields(source_frame, "source")
         
@@ -140,13 +176,13 @@ class DBCopyToolGUI:
             text="ターゲットデータベース（コピー先）",
             padding=10
         )
-        target_frame.grid(row=2, column=0, padx=10, pady=10, sticky="ew")
+        target_frame.grid(row=source_row+1, column=0, padx=10, pady=10, sticky="ew")
         
         self._create_db_fields(target_frame, "target")
         
         # 接続テストボタン
         button_frame = ttk.Frame(self.connection_frame)
-        button_frame.grid(row=3, column=0, pady=10)
+        button_frame.grid(row=source_row+2, column=0, pady=10)
         
         ttk.Button(
             button_frame,
@@ -182,53 +218,99 @@ class DBCopyToolGUI:
         if not hasattr(self, 'tns_combos'):
             self.tns_combos: Dict[str, ttk.Combobox] = {}
         
-        # TNSエントリ選択（tnsnames.oraが利用可能な場合）
+        # TNSエントリ選択（常に表示）
         row = 0
+        
+        # TNS エントリセクション
+        tns_section = ttk.LabelFrame(parent, text="方法1: TNS エントリから選択", padding=5)
+        tns_section.grid(row=row, column=0, columnspan=2, sticky="ew", padx=5, pady=5)
+        
+        help_text = "tnsnames.ora から登録済みの接続設定を選択（ホスト・ポート・サービス名が自動入力されます）"
+        ttk.Label(tns_section, text=help_text, foreground="gray", font=("", 8)).pack(anchor="w", padx=5, pady=(0, 5))
+        
+        # tnsnames.ora が読み込まれている場合はエントリを表示、そうでない場合は "未設定" を表示
         if self.tns_parser and self.tns_parser.has_tnsnames():
-            ttk.Label(parent, text="TNS エントリ:").grid(
-                row=row, column=0, sticky="e", padx=5, pady=5
-            )
-            
             tns_entries = list(self.tns_parser.get_entries().keys())
-            tns_combo = ttk.Combobox(
-                parent,
-                values=["（手動入力）"] + tns_entries,
-                state="readonly",
-                width=38
-            )
-            tns_combo.set("（手動入力）")
-            tns_combo.grid(row=row, column=1, sticky="ew", padx=5, pady=5)
+            combo_values = ["（手動入力）"] + sorted(tns_entries)
+            combo_state = "readonly"
+        else:
+            combo_values = ["（手動入力）", "tnsnames.ora が見つかりません"]
+            combo_state = "readonly"
+        
+        tns_combo = ttk.Combobox(
+            tns_section,
+            values=combo_values,
+            state=combo_state,
+            width=38
+        )
+        tns_combo.set("（手動入力）")
+        tns_combo.pack(fill="x", padx=5, pady=5)
+        
+        if self.tns_parser and self.tns_parser.has_tnsnames():
             tns_combo.bind("<<ComboboxSelected>>", 
                           lambda e, p=prefix: self._on_tns_selected(p))
-            
-            self.tns_combos[prefix] = tns_combo
-            row += 1
         
-        fields = [
+        self.tns_combos[prefix] = tns_combo
+        row += 1
+        
+        # または（手動入力）テキスト
+        ttk.Label(parent, text="─────────── または ───────────", 
+                 foreground="gray", font=("", 8)).grid(
+            row=row, column=0, columnspan=2, sticky="ew", padx=5, pady=(5, 5)
+        )
+        row += 1
+        
+        # 手動入力セクション
+        manual_section = ttk.LabelFrame(parent, text="方法2: 手動で接続情報を入力", padding=5)
+        manual_section.grid(row=row, column=0, columnspan=2, sticky="ew", padx=5, pady=5)
+        
+        connection_fields = [
             ("ホスト:", "host"),
             ("ポート:", "port"),
             ("サービス名/SID:", "service"),
-            ("ユーザー名:", "username"),
-            ("パスワード:", "password"),
         ]
         
-        for i, (label, field) in enumerate(fields):
-            ttk.Label(parent, text=label).grid(
-                row=row + i, column=0, sticky="e", padx=5, pady=5
+        for i, (label, field) in enumerate(connection_fields):
+            ttk.Label(manual_section, text=label).grid(
+                row=i, column=0, sticky="e", padx=5, pady=5
             )
             
-            entry = ttk.Entry(parent, width=40)
-            entry.grid(row=row + i, column=1, sticky="ew", padx=5, pady=5)
-            
-            # パスワードフィールドは表示を隠す
-            if field == "password":
-                entry.config(show="*")
+            entry = ttk.Entry(manual_section, width=40)
+            entry.grid(row=i, column=1, sticky="ew", padx=5, pady=5)
             
             # デフォルト値
             if field == "port":
                 entry.insert(0, "1521")
             
             self.entries[f"{prefix}_{field}"] = entry
+        
+        manual_section.columnconfigure(1, weight=1)
+        row += 1
+        
+        # 認証情報セクション（必須）
+        auth_section = ttk.LabelFrame(parent, text="★ 認証情報（必須）", padding=5)
+        auth_section.grid(row=row, column=0, columnspan=2, sticky="ew", padx=5, pady=5)
+        
+        auth_fields = [
+            ("ユーザー名: *", "username"),
+            ("パスワード: *", "password"),
+        ]
+        
+        for i, (label, field) in enumerate(auth_fields):
+            ttk.Label(auth_section, text=label, foreground="red" if "*" in label else "black").grid(
+                row=i, column=0, sticky="e", padx=5, pady=5
+            )
+            
+            entry = ttk.Entry(auth_section, width=40)
+            entry.grid(row=i, column=1, sticky="ew", padx=5, pady=5)
+            
+            # パスワードフィールドは表示を隠す
+            if field == "password":
+                entry.config(show="*")
+            
+            self.entries[f"{prefix}_{field}"] = entry
+        
+        auth_section.columnconfigure(1, weight=1)
         
         parent.columnconfigure(1, weight=1)
 
@@ -1027,6 +1109,15 @@ class DBCopyToolGUI:
         selected = self.tns_combos[prefix].get()
         
         if selected == "（手動入力）" or not self.tns_parser:
+            # 手動入力モード: フィールドを編集可能に
+            self.entries[f"{prefix}_host"].config(state="normal")
+            self.entries[f"{prefix}_port"].config(state="normal")
+            self.entries[f"{prefix}_service"].config(state="normal")
+            # フィールドをクリア
+            self.entries[f"{prefix}_host"].delete(0, tk.END)
+            self.entries[f"{prefix}_port"].delete(0, tk.END)
+            self.entries[f"{prefix}_port"].insert(0, "1521")
+            self.entries[f"{prefix}_service"].delete(0, tk.END)
             return
         
         # TNSエントリを取得
@@ -1034,17 +1125,23 @@ class DBCopyToolGUI:
         
         if entry:
             # 接続情報を自動入力
+            self.entries[f"{prefix}_host"].config(state="normal")
             self.entries[f"{prefix}_host"].delete(0, tk.END)
             self.entries[f"{prefix}_host"].insert(0, entry.host)
+            self.entries[f"{prefix}_host"].config(state="readonly")
             
+            self.entries[f"{prefix}_port"].config(state="normal")
             self.entries[f"{prefix}_port"].delete(0, tk.END)
             self.entries[f"{prefix}_port"].insert(0, str(entry.port))
+            self.entries[f"{prefix}_port"].config(state="readonly")
             
             service = entry.service_name or entry.sid or ""
+            self.entries[f"{prefix}_service"].config(state="normal")
             self.entries[f"{prefix}_service"].delete(0, tk.END)
             self.entries[f"{prefix}_service"].insert(0, service)
+            self.entries[f"{prefix}_service"].config(state="readonly")
             
-            self._log(f"TNSエントリ '{selected}' の接続情報を読み込みました", "success")
+            self._log(f"TNSエントリ '{selected}' の接続情報を読み込みました（接続情報は自動入力、認証情報は手動入力してください）", "success")
     
     def _select_tnsnames_file(self) -> None:
         """tnsnames.ora ファイルを選択。"""
@@ -1063,13 +1160,11 @@ class DBCopyToolGUI:
                 if self.tns_parser.has_tnsnames():
                     self._log(f"tnsnames.ora を読み込みました: {filename}", "success")
                     
-                    # UIを再構築（TNSエントリのドロップダウンを更新）
-                    messagebox.showinfo(
-                        "成功",
-                        f"tnsnames.ora を読み込みました\n\n"
-                        f"エントリ数: {len(self.tns_parser.get_entries())}\n\n"
-                        f"アプリケーションを再起動してください"
-                    )
+                    # ドロップダウンを更新
+                    self._update_tns_combos()
+                    
+                    # 詳細情報をダイアログに表示
+                    self._show_tnsnames_dialog()
                 else:
                     messagebox.showerror("エラー", "有効な tnsnames.ora ファイルではありません")
             
@@ -1078,6 +1173,108 @@ class DBCopyToolGUI:
                 self._log(error_msg, "error")
                 logging.error(error_msg, exc_info=True)
                 messagebox.showerror("エラー", error_msg)
+    
+    def _update_tns_combos(self) -> None:
+        """TNSエントリドロップダウンを更新。"""
+        if not self.tns_parser or not self.tns_parser.has_tnsnames():
+            # エントリが見つからない場合
+            for combo in self.tns_combos.values():
+                combo.config(values=["（手動入力）", "tnsnames.ora が見つかりません"])
+            return
+        
+        # エントリを取得してドロップダウンを更新
+        tns_entries = sorted(self.tns_parser.get_entries().keys())
+        combo_values = ["（手動入力）"] + tns_entries
+        
+        for combo in self.tns_combos.values():
+            combo.config(values=combo_values)
+            combo.set("（手動入力）")
+    
+    def _show_tnsnames_entries(self) -> None:
+        """tnsnames.ora の読み込み結果をダイアログに表示。"""
+        if not self.tns_parser or not self.tns_parser.has_tnsnames():
+            messagebox.showwarning("警告", "tnsnames.ora が読み込まれていません")
+            return
+        
+        self._show_tnsnames_dialog()
+    
+    def _show_tnsnames_dialog(self) -> None:
+        """tnsnames.ora の詳細情報をダイアログ表示。"""
+        if not self.tns_parser or not self.tns_parser.has_tnsnames():
+            return
+        
+        entries = self.tns_parser.get_entries()
+        if not entries:
+            messagebox.showinfo("情報", "tnsnames.ora にエントリがありません")
+            return
+        
+        # ダイアログウィンドウを作成
+        dialog = tk.Toplevel(self.root)
+        dialog.title("tnsnames.ora エントリ一覧")
+        dialog.geometry("900x600")
+        
+        # ヘッダー
+        header_frame = ttk.Frame(dialog)
+        header_frame.pack(fill=tk.X, padx=10, pady=10)
+        
+        ttk.Label(
+            header_frame,
+            text=f"tnsnames.ora: {self.tns_parser.get_tnsnames_path()}",
+            foreground="green",
+            font=("Arial", 10, "bold")
+        ).pack(anchor="w")
+        
+        ttk.Label(
+            header_frame,
+            text=f"読み込まれたエントリ: {len(entries)} 件",
+            foreground="blue"
+        ).pack(anchor="w", pady=5)
+        
+        # スクロール可能なテキスト表示
+        text_frame = ttk.Frame(dialog)
+        text_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        
+        scrollbar = ttk.Scrollbar(text_frame)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        content_text = tk.Text(
+            text_frame,
+            height=20,
+            width=100,
+            wrap=tk.WORD,
+            yscrollcommand=scrollbar.set
+        )
+        scrollbar.config(command=content_text.yview)
+        content_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        
+        # エントリ情報をテキストに挿入
+        content = self.tns_parser.display_entries()
+        content_text.insert(tk.END, content)
+        content_text.config(state=tk.DISABLED)
+        
+        # ボタンフレーム
+        button_frame = ttk.Frame(dialog)
+        button_frame.pack(pady=10)
+        
+        ttk.Button(
+            button_frame,
+            text="閉じる",
+            command=dialog.destroy,
+            width=20
+        ).pack(side=tk.LEFT, padx=5)
+        
+        ttk.Button(
+            button_frame,
+            text="クリップボードにコピー",
+            command=lambda: self._copy_to_clipboard(content),
+            width=25
+        ).pack(side=tk.LEFT, padx=5)
+    
+    def _copy_to_clipboard(self, text: str) -> None:
+        """テキストをクリップボードにコピー。"""
+        self.root.clipboard_clear()
+        self.root.clipboard_append(text)
+        messagebox.showinfo("成功", "クリップボードにコピーしました")
 
     def _save_config(self) -> None:
         """設定を保存。"""

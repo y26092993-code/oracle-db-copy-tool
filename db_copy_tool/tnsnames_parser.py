@@ -26,6 +26,74 @@ class TnsEntry:
         """文字列表現。"""
         service_info = self.service_name or self.sid or "?"
         return f"{self.name} ({self.host}:{self.port}/{service_info})"
+    
+    def get_connection_string(self) -> str:
+        """簡潔形式の接続文字列を取得。
+        
+        Returns:
+            host:port/service_name または host:port:sid の形式
+        """
+        if self.service_name:
+            return f"{self.host}:{self.port}/{self.service_name}"
+        else:
+            return f"{self.host}:{self.port}:{self.sid}"
+    
+    def get_sqlplus_string(self, username: str = "user") -> str:
+        """SQLPlus 用の接続文字列を取得。
+        
+        Args:
+            username: ユーザー名
+            
+        Returns:
+            SQLPlus 形式の接続文字列
+        """
+        if self.service_name:
+            return f"{username}@{self.host}:{self.port}/{self.service_name}"
+        else:
+            return f"{username}@{self.host}:{self.port}:{self.sid}"
+    
+    def get_jdbc_url(self) -> str:
+        """JDBC URL を取得。
+        
+        Returns:
+            JDBC 接続 URL
+        """
+        if self.service_name:
+            return f"jdbc:oracle:thin:@{self.host}:{self.port}/{self.service_name}"
+        else:
+            return f"jdbc:oracle:thin:@{self.host}:{self.port}:{self.sid}"
+    
+    def get_description_block(self) -> str:
+        """tnsnames.ora 形式の DESCRIPTION ブロックを取得。
+        
+        Returns:
+            DESCRIPTION = (...) 形式の文字列
+        """
+        service_param = f"(SERVICE_NAME = {self.service_name})" if self.service_name else f"(SID = {self.sid})"
+        
+        return f"""({self.name} =
+  (DESCRIPTION =
+    (ADDRESS = (PROTOCOL = TCP)(HOST = {self.host})(PORT = {self.port}))
+    (CONNECT_DATA = {service_param})
+  )
+)"""
+    
+    def get_info_dict(self) -> Dict[str, str]:
+        """接続情報を辞書で取得。
+        
+        Returns:
+            接続情報の辞書
+        """
+        return {
+            "name": self.name,
+            "host": self.host,
+            "port": str(self.port),
+            "service_name": self.service_name or "N/A",
+            "sid": self.sid or "N/A",
+            "connection_string": self.get_connection_string(),
+            "jdbc_url": self.get_jdbc_url(),
+            "sqlplus": self.get_sqlplus_string(),
+        }
 
 
 class TnsNamesParser:
@@ -127,13 +195,36 @@ class TnsNamesParser:
         
         content = '\n'.join(lines)
         
-        # エントリを解析（正規表現）
-        # TNSエントリのパターン: NAME = (DESCRIPTION = ... )
-        pattern = r'(\w+)\s*=\s*\(DESCRIPTION\s*=\s*(.+?)\)(?:\s*\n|$)'
+        # エントリを解析
+        # NAME = (DESCRIPTION = ... ) の形式
+        pattern = r'(\w+)\s*=\s*\(DESCRIPTION\s*='
         
-        for match in re.finditer(pattern, content, re.DOTALL | re.IGNORECASE):
+        for match in re.finditer(pattern, content, re.IGNORECASE):
             entry_name = match.group(1).strip()
-            entry_content = match.group(2).strip()
+            
+            # NAME = ( の位置を見つける
+            name_start = match.start()
+            entry_paren_start = content.find('(', name_start)
+            
+            # 括弧のネストレベルを追跡して、対応する閉じ括弧を見つける
+            paren_count = 0
+            entry_paren_end = -1
+            
+            for i in range(entry_paren_start, len(content)):
+                if content[i] == '(':
+                    paren_count += 1
+                elif content[i] == ')':
+                    paren_count -= 1
+                    if paren_count == 0:
+                        entry_paren_end = i
+                        break
+            
+            if entry_paren_end == -1:
+                logging.warning(f"{entry_name}: 対応する閉じ括弧が見つかりません")
+                continue
+            
+            # DESCRIPTION = の後の内容を抽出
+            entry_content = content[match.end():entry_paren_end].strip()
             
             entry = self._parse_entry(entry_name, entry_content)
             if entry:
@@ -146,32 +237,43 @@ class TnsNamesParser:
         
         Args:
             name: エントリ名
-            content: エントリの内容
+            content: エントリの内容（DESCRIPTION = ... の内側）
             
         Returns:
             TnsEntry または None
         """
-        # HOST を抽出
-        host_match = re.search(r'HOST\s*=\s*([^\s\)]+)', content, re.IGNORECASE)
-        if not host_match:
+        host = None
+        port = None
+        service_name = None
+        sid = None
+        
+        # 簡潔な方法：正規表現で直接抽出
+        # ADDRESS ブロック内の HOST と PORT を探す
+        host_match = re.search(r'ADDRESS\s*=.*?\(HOST\s*=\s*([^\s\)]+)', content, re.IGNORECASE | re.DOTALL)
+        if host_match:
+            host = host_match.group(1).strip()
+        
+        port_match = re.search(r'ADDRESS\s*=.*?\(PORT\s*=\s*(\d+)', content, re.IGNORECASE | re.DOTALL)
+        if port_match:
+            port = int(port_match.group(1))
+        
+        # CONNECT_DATA ブロック内の SERVICE_NAME と SID を探す
+        service_match = re.search(r'SERVICE_NAME\s*=\s*([^\s\)]+)', content, re.IGNORECASE)
+        if service_match:
+            service_name = service_match.group(1).strip()
+        
+        sid_match = re.search(r'SID\s*=\s*([^\s\)]+)', content, re.IGNORECASE)
+        if sid_match:
+            sid = sid_match.group(1).strip()
+        
+        # 必須フィールドの検証
+        if not host:
             logging.warning(f"{name}: HOST が見つかりません")
             return None
-        host = host_match.group(1).strip()
         
-        # PORT を抽出
-        port_match = re.search(r'PORT\s*=\s*(\d+)', content, re.IGNORECASE)
-        if not port_match:
+        if not port:
             logging.warning(f"{name}: PORT が見つかりません")
             return None
-        port = int(port_match.group(1))
-        
-        # SERVICE_NAME を抽出
-        service_match = re.search(r'SERVICE_NAME\s*=\s*([^\s\)]+)', content, re.IGNORECASE)
-        service_name = service_match.group(1).strip() if service_match else None
-        
-        # SID を抽出（SERVICE_NAME がない場合）
-        sid_match = re.search(r'SID\s*=\s*([^\s\)]+)', content, re.IGNORECASE)
-        sid = sid_match.group(1).strip() if sid_match else None
         
         if not service_name and not sid:
             logging.warning(f"{name}: SERVICE_NAME も SID も見つかりません")
@@ -219,3 +321,34 @@ class TnsNamesParser:
             パス、見つからない場合は None
         """
         return self.tnsnames_path
+    
+    def display_entries(self) -> str:
+        """読み込んだエントリの接続文字列を表示用の文字列で取得。
+        
+        Returns:
+            フォーマットされた接続文字列情報
+        """
+        if not self.entries:
+            return "No entries loaded from tnsnames.ora"
+        
+        output_lines = []
+        output_lines.append(f"tnsnames.ora: {self.tnsnames_path}")
+        output_lines.append(f"Entries loaded: {len(self.entries)}\n")
+        
+        for name in sorted(self.entries.keys()):
+            entry = self.entries[name]
+            output_lines.append(f"【{entry.name}】")
+            output_lines.append(f"  Host:              {entry.host}")
+            output_lines.append(f"  Port:              {entry.port}")
+            output_lines.append(f"  Service Name:      {entry.service_name or 'N/A'}")
+            output_lines.append(f"  SID:               {entry.sid or 'N/A'}")
+            output_lines.append(f"  Connection String: {entry.get_connection_string()}")
+            output_lines.append(f"  JDBC URL:          {entry.get_jdbc_url()}")
+            output_lines.append(f"  SQLPlus:           {entry.get_sqlplus_string()}")
+            output_lines.append("")
+        
+        return "\n".join(output_lines)
+    
+    def print_entries(self) -> None:
+        """読み込んだエントリの接続文字列をコンソールに表示。"""
+        print(self.display_entries())
