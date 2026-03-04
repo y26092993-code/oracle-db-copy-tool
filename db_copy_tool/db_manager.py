@@ -5,7 +5,7 @@ Oracle DBのオブジェクトを管理し、別のDBへコピーする機能を
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import List, Optional, Dict, Tuple, Callable
+from typing import List, Optional, Dict, Tuple, Callable, Any
 import logging
 import fnmatch
 
@@ -90,6 +90,27 @@ class DatabaseManager:
         self.target_conn: Optional[oracledb.Connection] = None
         
         logging.info("DatabaseManager初期化完了")
+
+    def _create_connection(self, config: ConnectionConfig) -> oracledb.Connection:
+        """ドライバ互換性を考慮してDB接続を作成。"""
+        connect_kwargs: Dict[str, Any] = {
+            "user": config.username,
+            "password": config.password,
+            "dsn": config.get_dsn(),
+            "encoding": "UTF-8",
+            "nencoding": "UTF-8",
+        }
+
+        try:
+            return oracledb.connect(**connect_kwargs)
+        except TypeError as exc:
+            error_text = str(exc)
+            if "unexpected keyword argument 'encoding'" in error_text or "unexpected keyword argument 'nencoding'" in error_text:
+                logging.info("DBドライバが encoding/nencoding 未対応のため、標準設定で再接続します")
+                connect_kwargs.pop("encoding", None)
+                connect_kwargs.pop("nencoding", None)
+                return oracledb.connect(**connect_kwargs)
+            raise
     
     def connect_source(self) -> oracledb.Connection:
         """ソースDBに接続。
@@ -99,13 +120,7 @@ class DatabaseManager:
         """
         if not self.source_conn:
             logging.info(f"ソースDB接続: {self.source_config.get_dsn()}")
-            self.source_conn = oracledb.connect(
-                user=self.source_config.username,
-                password=self.source_config.password,
-                dsn=self.source_config.get_dsn(),
-                encoding="UTF-8",
-                nencoding="UTF-8"
-            )
+            self.source_conn = self._create_connection(self.source_config)
             logging.info("ソースDB接続成功")
         return self.source_conn
     
@@ -117,13 +132,7 @@ class DatabaseManager:
         """
         if not self.target_conn:
             logging.info(f"ターゲットDB接続: {self.target_config.get_dsn()}")
-            self.target_conn = oracledb.connect(
-                user=self.target_config.username,
-                password=self.target_config.password,
-                dsn=self.target_config.get_dsn(),
-                encoding="UTF-8",
-                nencoding="UTF-8"
-            )
+            self.target_conn = self._create_connection(self.target_config)
             logging.info("ターゲットDB接続成功")
         return self.target_conn
     
