@@ -6,11 +6,18 @@ block_cipher = None
 
 a = Analysis(
     ['db_copy_gui.py'],
-    pathex=[],
+    pathex=['.'],  # 現在のディレクトリのモジュールを検索
     binaries=[],
-    datas=[],
+    datas=[
+        ('db_manager.py', '.'),
+        ('tnsnames_parser.py', '.'),
+    ],
     hiddenimports=[
+        'db_manager',
+        'tnsnames_parser',
         'oracledb',
+        'cryptography',
+        'cffi',
         'tkinter',
         'tkinter.ttk',
         'tkinter.scrolledtext',

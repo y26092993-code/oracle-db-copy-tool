@@ -3,8 +3,12 @@
 # Oracle データベース接続
 oracledb>=2.0.0
 
+# Oracle接続の暗号化通信に必須
+cryptography>=41.0.0
+cffi>=1.16.0
+
 # PyYAML（設定ファイル読み込み用、オプション）
 PyYAML>=6.0
 
-# PyInstaller（実行ファイル作成用）
+# PyInstaller（実行ファイル作成用、exe化する場合のみ）
 pyinstaller>=6.0.0

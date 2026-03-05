@@ -1,4 +1,7 @@
 @echo off
+REM エンコーディングを UTF-8 に設定（PowerShell での文字化け対策）
+chcp 65001 >nul 2>&1
+
 REM Oracle DB オブジェクトコピーツール ビルドスクリプト
 REM 
 REM このスクリプトは PyInstaller を使用して

@@ -1,5 +1,19 @@
 # Oracle DB Copy Tool - Release Notes
 
+## v1.0.1 - 2026年3月5日
+
+### 更新内容
+- ✅ **cryptography パッケージ対応**
+  - python-oracledb thin mode で暗号化通信をサポート
+  - スタンドアロン exe 化時に cryptography を自動バンドル
+  - requirements.txt に cryptography, cffi を追加
+
+### 修正事項
+- PyInstaller spec ファイルを更新（cryptography, cffi を hiddenimports に追加）
+- exe 化後も Python 環境がなくても完全に動作確認
+
+---
+
 ## v1.0.0 - 2026年3月1日
 
 ### 概要
