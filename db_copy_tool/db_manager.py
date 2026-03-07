@@ -88,8 +88,24 @@ class DatabaseManager:
         self.target_config = target_config
         self.source_conn: Optional[oracledb.Connection] = None
         self.target_conn: Optional[oracledb.Connection] = None
+        self.last_connection_error: Optional[str] = None
         
         logging.info("DatabaseManager初期化完了")
+
+    def _format_connection_error(self, error: Exception) -> str:
+        """接続エラーをユーザー向けメッセージに整形。"""
+        error_text = str(error)
+
+        if "DPY-3016" in error_text and "x509" in error_text:
+            return (
+                "DPY-3016: oracledb thin mode で cryptography.x509 の読み込みに失敗しました。\n"
+                "対処方法:\n"
+                "1. 仮想環境で `pip install -U cryptography pyinstaller` を実行\n"
+                "2. `build` / `dist` を削除して再ビルド\n"
+                "3. `pyinstaller db_copy_tool.spec` で exe を再生成"
+            )
+
+        return error_text
 
     def _create_connection(self, config: ConnectionConfig) -> oracledb.Connection:
         """ドライバ互換性を考慮してDB接続を作成。
@@ -165,6 +181,8 @@ class DatabaseManager:
         Returns:
             両方の接続が成功した場合True
         """
+        self.last_connection_error = None
+
         try:
             # ソース接続テスト
             source_conn = self.connect_source()
@@ -185,5 +203,6 @@ class DatabaseManager:
             return True
         
         except Exception as e:
-            logging.error(f"接続テスト失敗: {e}", exc_info=True)
+            self.last_connection_error = self._format_connection_error(e)
+            logging.error(f"接続テスト失敗: {self.last_connection_error}", exc_info=True)
             return False

@@ -2,7 +2,13 @@
 # PyInstaller specファイル
 # Oracle DB オブジェクトコピーツール
 
+from PyInstaller.utils.hooks import collect_submodules
+
 block_cipher = None
+
+# oracledb thin mode が動作するよう、x509関連を明示的に同梱する。
+oracledb_hiddenimports = collect_submodules('oracledb')
+cryptography_x509_hiddenimports = collect_submodules('cryptography.x509')
 
 a = Analysis(
     ['db_copy_gui.py'],
@@ -17,13 +23,15 @@ a = Analysis(
         'tnsnames_parser',
         'oracledb',
         'cryptography',
+        'cryptography.x509',
+        'cryptography.x509.oid',
         'cffi',
         'tkinter',
         'tkinter.ttk',
         'tkinter.scrolledtext',
         'tkinter.messagebox',
         'tkinter.filedialog',
-    ],
+    ] + oracledb_hiddenimports + cryptography_x509_hiddenimports,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

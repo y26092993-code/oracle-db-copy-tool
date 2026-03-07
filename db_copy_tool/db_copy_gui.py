@@ -591,7 +591,14 @@ class DBCopyToolGUI:
                 messagebox.showinfo("成功", "接続テストに成功しました")
             else:
                 self._log("✗ 接続テストに失敗しました", "error")
-                messagebox.showerror("エラー", "接続テストに失敗しました")
+                detail = self.db_manager.last_connection_error
+                if detail:
+                    messagebox.showerror(
+                        "エラー",
+                        f"接続テストに失敗しました\n\n詳細:\n{detail}"
+                    )
+                else:
+                    messagebox.showerror("エラー", "接続テストに失敗しました")
         
         except Exception as e:
             error_msg = f"接続エラー: {str(e)}"
