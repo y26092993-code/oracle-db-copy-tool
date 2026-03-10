@@ -99,8 +99,11 @@ class DBCopyToolGUI:
 
     def _create_connection_tab(self) -> None:
         """接続設定タブを作成。"""
+        parent = self.connection_frame
+        parent.columnconfigure(0, weight=1)
+
         # tnsnames.ora 読 込みボタン
-        tns_toolbar = ttk.Frame(self.connection_frame)
+        tns_toolbar = ttk.Frame(parent)
         tns_toolbar.grid(row=0, column=0, padx=10, pady=(10, 5), sticky="ew")
         
         if self.tns_parser and self.tns_parser.has_tnsnames():
@@ -131,58 +134,32 @@ class DBCopyToolGUI:
             width=20
         ).pack(side=tk.LEFT, padx=5)
         
-        # tnsnames.ora 読み込み結果表示エリア
-        if self.tns_parser and self.tns_parser.has_tnsnames() and len(self.tns_parser.get_entries()) > 0:
-            tns_info_frame = ttk.LabelFrame(
-                self.connection_frame,
-                text="tnsnames.ora エントリ一覧",
-                padding=5
-            )
-            tns_info_frame.grid(row=1, column=0, padx=10, pady=5, sticky="ewns")
-            
-            # スクロール可能なテキスト表示
-            tns_text = scrolledtext.ScrolledText(
-                tns_info_frame,
-                height=8,
-                width=80,
-                wrap=tk.WORD,
-                state=tk.DISABLED
-            )
-            tns_text.pack(fill=tk.BOTH, expand=True)
-            
-            # エントリ情報をテキストに挿入
-            tns_text.config(state=tk.NORMAL)
-            tns_text.delete('1.0', tk.END)
-            tns_text.insert(tk.END, self.tns_parser.display_entries())
-            tns_text.config(state=tk.DISABLED)
-            
-            source_row = 2
-        else:
-            source_row = 1
+        # 画面内に収めるため、一覧の埋め込み表示は行わずダイアログ表示のみにする。
+        source_row = 1
         
         # ソースDB設定
         source_frame = ttk.LabelFrame(
-            self.connection_frame,
+            parent,
             text="ソースデータベース（コピー元）",
             padding=10
         )
-        source_frame.grid(row=source_row, column=0, padx=10, pady=10, sticky="ew")
+        source_frame.grid(row=source_row, column=0, padx=10, pady=6, sticky="ew")
         
         self._create_db_fields(source_frame, "source")
         
         # ターゲットDB設定
         target_frame = ttk.LabelFrame(
-            self.connection_frame,
+            parent,
             text="ターゲットデータベース（コピー先）",
             padding=10
         )
-        target_frame.grid(row=source_row+1, column=0, padx=10, pady=10, sticky="ew")
+        target_frame.grid(row=source_row+1, column=0, padx=10, pady=6, sticky="ew")
         
         self._create_db_fields(target_frame, "target")
         
         # 接続テストボタン
-        button_frame = ttk.Frame(self.connection_frame)
-        button_frame.grid(row=source_row+2, column=0, pady=10)
+        button_frame = ttk.Frame(parent)
+        button_frame.grid(row=source_row+2, column=0, pady=8)
         
         ttk.Button(
             button_frame,
@@ -223,10 +200,10 @@ class DBCopyToolGUI:
         
         # TNS エントリセクション
         tns_section = ttk.LabelFrame(parent, text="方法1: TNS エントリから選択", padding=5)
-        tns_section.grid(row=row, column=0, columnspan=2, sticky="ew", padx=5, pady=5)
+        tns_section.grid(row=row, column=0, columnspan=2, sticky="ew", padx=5, pady=3)
         
         help_text = "tnsnames.ora から登録済みの接続設定を選択（ホスト・ポート・サービス名が自動入力されます）"
-        ttk.Label(tns_section, text=help_text, foreground="gray", font=("", 8)).pack(anchor="w", padx=5, pady=(0, 5))
+        ttk.Label(tns_section, text=help_text, foreground="gray", font=("", 8)).pack(anchor="w", padx=5, pady=(0, 3))
         
         # tnsnames.ora が読み込まれている場合はエントリを表示、そうでない場合は "未設定" を表示
         if self.tns_parser and self.tns_parser.has_tnsnames():
@@ -244,7 +221,7 @@ class DBCopyToolGUI:
             width=38
         )
         tns_combo.set("（手動入力）")
-        tns_combo.pack(fill="x", padx=5, pady=5)
+        tns_combo.pack(fill="x", padx=5, pady=3)
         
         if self.tns_parser and self.tns_parser.has_tnsnames():
             tns_combo.bind("<<ComboboxSelected>>", 
@@ -256,13 +233,13 @@ class DBCopyToolGUI:
         # または（手動入力）テキスト
         ttk.Label(parent, text="─────────── または ───────────", 
                  foreground="gray", font=("", 8)).grid(
-            row=row, column=0, columnspan=2, sticky="ew", padx=5, pady=(5, 5)
+            row=row, column=0, columnspan=2, sticky="ew", padx=5, pady=(3, 3)
         )
         row += 1
         
         # 手動入力セクション
         manual_section = ttk.LabelFrame(parent, text="方法2: 手動で接続情報を入力", padding=5)
-        manual_section.grid(row=row, column=0, columnspan=2, sticky="ew", padx=5, pady=5)
+        manual_section.grid(row=row, column=0, columnspan=2, sticky="ew", padx=5, pady=3)
         
         connection_fields = [
             ("ホスト:", "host"),
@@ -272,11 +249,11 @@ class DBCopyToolGUI:
         
         for i, (label, field) in enumerate(connection_fields):
             ttk.Label(manual_section, text=label).grid(
-                row=i, column=0, sticky="e", padx=5, pady=5
+                row=i, column=0, sticky="e", padx=5, pady=3
             )
             
             entry = ttk.Entry(manual_section, width=40)
-            entry.grid(row=i, column=1, sticky="ew", padx=5, pady=5)
+            entry.grid(row=i, column=1, sticky="ew", padx=5, pady=3)
             
             # デフォルト値
             if field == "port":
@@ -289,7 +266,7 @@ class DBCopyToolGUI:
         
         # 認証情報セクション（必須）
         auth_section = ttk.LabelFrame(parent, text="★ 認証情報（必須）", padding=5)
-        auth_section.grid(row=row, column=0, columnspan=2, sticky="ew", padx=5, pady=5)
+        auth_section.grid(row=row, column=0, columnspan=2, sticky="ew", padx=5, pady=3)
         
         auth_fields = [
             ("ユーザー名: *", "username"),
@@ -298,11 +275,11 @@ class DBCopyToolGUI:
         
         for i, (label, field) in enumerate(auth_fields):
             ttk.Label(auth_section, text=label, foreground="red" if "*" in label else "black").grid(
-                row=i, column=0, sticky="e", padx=5, pady=5
+                row=i, column=0, sticky="e", padx=5, pady=3
             )
             
             entry = ttk.Entry(auth_section, width=40)
-            entry.grid(row=i, column=1, sticky="ew", padx=5, pady=5)
+            entry.grid(row=i, column=1, sticky="ew", padx=5, pady=3)
             
             # パスワードフィールドは表示を隠す
             if field == "password":

@@ -6,9 +6,10 @@ from PyInstaller.utils.hooks import collect_submodules
 
 block_cipher = None
 
-# oracledb thin mode が動作するよう、x509関連を明示的に同梱する。
+# oracledb thin mode が動作するよう、cryptography関連を明示的に同梱する。
 oracledb_hiddenimports = collect_submodules('oracledb')
 cryptography_x509_hiddenimports = collect_submodules('cryptography.x509')
+cryptography_hazmat_hiddenimports = collect_submodules('cryptography.hazmat')
 
 a = Analysis(
     ['db_copy_gui.py'],
@@ -25,13 +26,21 @@ a = Analysis(
         'cryptography',
         'cryptography.x509',
         'cryptography.x509.oid',
+        'cryptography.hazmat',
+        'cryptography.hazmat.primitives',
+        'cryptography.hazmat.primitives.kdf',
+        'cryptography.hazmat.primitives.kdf.pbkdf2',
+        'cryptography.hazmat.primitives.kdf.hkdf',
+        'cryptography.hazmat.primitives.kdf.scrypt',
+        'cryptography.hazmat.backends',
+        'cryptography.hazmat.backends.openssl',
         'cffi',
         'tkinter',
         'tkinter.ttk',
         'tkinter.scrolledtext',
         'tkinter.messagebox',
         'tkinter.filedialog',
-    ] + oracledb_hiddenimports + cryptography_x509_hiddenimports,
+    ] + oracledb_hiddenimports + cryptography_x509_hiddenimports + cryptography_hazmat_hiddenimports,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
