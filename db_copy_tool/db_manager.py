@@ -5,7 +5,7 @@ Oracle DBのオブジェクトを管理し、別のDBへコピーする機能を
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import List, Optional, Dict, Tuple, Callable, Any
+from typing import List, Optional, Dict, List, Tuple, Callable, Any
 import logging
 import fnmatch
 
@@ -223,3 +223,497 @@ class DatabaseManager:
             self.last_connection_error = self._format_connection_error(e)
             logging.error(f"接続テスト失敗: {self.last_connection_error}", exc_info=True)
             return False
+
+    def filter_objects_by_pattern(
+        self,
+        objects: List["DatabaseObject"],
+        patterns: Optional[List[str]] = None
+    ) -> List["DatabaseObject"]:
+        """ワイルドカードパターンでオブジェクトをフィルタリング。
+
+        Args:
+            objects: オブジェクト一覧
+            patterns: ワイルドカードパターンのリスト
+                     Noneまたは空リストの場合は全件返す
+
+        Note:
+            Oracleスタイルのワイルドカードを使用:
+            - % : 任意の文字列（0文字以上）
+            - _ : 任意の1文字
+        """
+        if not patterns:
+            return objects
+
+        filtered = []
+        for obj in objects:
+            for pattern in patterns:
+                fnmatch_pattern = pattern.replace('%', '*').replace('_', '?')
+                if fnmatch.fnmatch(obj.name.upper(), fnmatch_pattern.upper()):
+                    filtered.append(obj)
+                    break
+
+        logging.info(f"フィルタ適用: {len(objects)} 件 → {len(filtered)} 件")
+        return filtered
+
+    def get_source_objects(
+        self,
+        object_types: List[ObjectType],
+        name_patterns: Optional[List[str]] = None
+    ) -> List["DatabaseObject"]:
+        """ソースDBのオブジェクト一覧を取得。
+
+        Args:
+            object_types: 取得するオブジェクトタイプ
+            name_patterns: オブジェクト名のフィルタパターン
+        """
+        conn = self.connect_source()
+        cursor = conn.cursor()
+
+        objects: List[DatabaseObject] = []
+
+        for obj_type in object_types:
+            try:
+                if obj_type == ObjectType.PACKAGE:
+                    query = """
+                        SELECT object_name, object_type, owner, status,
+                               TO_CHAR(created, 'YYYY-MM-DD HH24:MI:SS') as created,
+                               TO_CHAR(last_ddl_time, 'YYYY-MM-DD HH24:MI:SS') as last_ddl_time
+                        FROM user_objects
+                        WHERE object_type IN ('PACKAGE', 'PACKAGE BODY')
+                        ORDER BY object_name, object_type
+                    """
+                    cursor.execute(query)
+                else:
+                    query = """
+                        SELECT object_name, object_type, owner, status,
+                               TO_CHAR(created, 'YYYY-MM-DD HH24:MI:SS') as created,
+                               TO_CHAR(last_ddl_time, 'YYYY-MM-DD HH24:MI:SS') as last_ddl_time
+                        FROM user_objects
+                        WHERE object_type = :obj_type
+                        ORDER BY object_name
+                    """
+                    cursor.execute(query, {'obj_type': obj_type.value})
+
+                for row in cursor:
+                    obj_name, obj_type_str, owner, status, created, last_ddl_time = row
+                    try:
+                        obj_type_enum = ObjectType(obj_type_str)
+                    except ValueError:
+                        obj_type_enum = obj_type
+                    objects.append(DatabaseObject(
+                        name=obj_name,
+                        object_type=obj_type_enum,
+                        owner=owner,
+                        status=status,
+                        created=created,
+                        last_ddl_time=last_ddl_time
+                    ))
+
+                logging.info(f"{obj_type.value}: {len([o for o in objects if o.object_type == obj_type])} 件")
+
+            except Exception as e:
+                logging.error(f"{obj_type.value}の取得エラー: {e}")
+
+        cursor.close()
+
+        if name_patterns:
+            objects = self.filter_objects_by_pattern(objects, name_patterns)
+
+        return objects
+
+    def get_target_objects(
+        self,
+        object_types: List[ObjectType],
+        name_patterns: Optional[List[str]] = None
+    ) -> List["DatabaseObject"]:
+        """ターゲットDBのオブジェクト一覧を取得。
+
+        Args:
+            object_types: 取得するオブジェクトタイプ
+            name_patterns: オブジェクト名のフィルタパターン
+        """
+        conn = self.connect_target()
+        cursor = conn.cursor()
+
+        objects: List[DatabaseObject] = []
+
+        for obj_type in object_types:
+            try:
+                if obj_type == ObjectType.PACKAGE:
+                    query = """
+                        SELECT object_name, object_type, owner, status,
+                               TO_CHAR(created, 'YYYY-MM-DD HH24:MI:SS') as created,
+                               TO_CHAR(last_ddl_time, 'YYYY-MM-DD HH24:MI:SS') as last_ddl_time
+                        FROM user_objects
+                        WHERE object_type IN ('PACKAGE', 'PACKAGE BODY')
+                        ORDER BY object_name, object_type
+                    """
+                    cursor.execute(query)
+                else:
+                    query = """
+                        SELECT object_name, object_type, owner, status,
+                               TO_CHAR(created, 'YYYY-MM-DD HH24:MI:SS') as created,
+                               TO_CHAR(last_ddl_time, 'YYYY-MM-DD HH24:MI:SS') as last_ddl_time
+                        FROM user_objects
+                        WHERE object_type = :obj_type
+                        ORDER BY object_name
+                    """
+                    cursor.execute(query, {'obj_type': obj_type.value})
+
+                for row in cursor:
+                    obj_name, obj_type_str, owner, status, created, last_ddl_time = row
+                    try:
+                        obj_type_enum = ObjectType(obj_type_str)
+                    except ValueError:
+                        obj_type_enum = obj_type
+                    objects.append(DatabaseObject(
+                        name=obj_name,
+                        object_type=obj_type_enum,
+                        owner=owner,
+                        status=status,
+                        created=created,
+                        last_ddl_time=last_ddl_time
+                    ))
+
+                logging.info(f"[TARGET] {obj_type.value}: {len([o for o in objects if o.object_type == obj_type])} 件")
+
+            except Exception as e:
+                logging.error(f"[TARGET] {obj_type.value}の取得エラー: {e}")
+
+        cursor.close()
+
+        if name_patterns:
+            objects = self.filter_objects_by_pattern(objects, name_patterns)
+
+        return objects
+
+    def compare_objects(
+        self,
+        source_objects: List["DatabaseObject"],
+        target_objects: List["DatabaseObject"]
+    ) -> Dict[str, List["DatabaseObject"]]:
+        """ソースとターゲットのオブジェクトを比較。
+
+        Returns:
+            {
+                'only_in_source': ターゲットに存在しないオブジェクト,
+                'only_in_target': ソースに存在しないオブジェクト,
+                'in_both': 両方に存在するオブジェクト
+            }
+        """
+        source_keys = {(obj.name, obj.object_type) for obj in source_objects}
+        target_keys = {(obj.name, obj.object_type) for obj in target_objects}
+
+        source_dict = {(obj.name, obj.object_type): obj for obj in source_objects}
+        target_dict = {(obj.name, obj.object_type): obj for obj in target_objects}
+
+        only_in_source = [source_dict[key] for key in source_keys - target_keys]
+        only_in_target = [target_dict[key] for key in target_keys - source_keys]
+        in_both = [source_dict[key] for key in source_keys & target_keys]
+
+        return {
+            'only_in_source': only_in_source,
+            'only_in_target': only_in_target,
+            'in_both': in_both
+        }
+
+    def get_object_ddl(
+        self,
+        object_name: str,
+        object_type: ObjectType
+    ) -> Optional[str]:
+        """オブジェクトのDDLを取得。
+
+        Args:
+            object_name: オブジェクト名
+            object_type: オブジェクトタイプ
+
+        Returns:
+            DDL文字列、取得失敗時はNone
+        """
+        conn = self.connect_source()
+        cursor = conn.cursor()
+
+        try:
+            if object_type in [
+                ObjectType.PROCEDURE, ObjectType.FUNCTION,
+                ObjectType.PACKAGE, ObjectType.PACKAGE_BODY, ObjectType.TRIGGER
+            ]:
+                query = """
+                    SELECT text
+                    FROM user_source
+                    WHERE name = :name
+                    AND type = :type
+                    ORDER BY line
+                """
+                cursor.execute(query, {
+                    'name': object_name.upper(),
+                    'type': object_type.value
+                })
+                lines = [row[0] for row in cursor]
+                if lines:
+                    return f"CREATE OR REPLACE {''.join(lines)}"
+                return None
+
+            elif object_type == ObjectType.VIEW:
+                query = """
+                    SELECT text
+                    FROM user_views
+                    WHERE view_name = :name
+                """
+                cursor.execute(query, {'name': object_name.upper()})
+                row = cursor.fetchone()
+                if row:
+                    return f"CREATE OR REPLACE VIEW {object_name} AS\n{row[0]}"
+                return None
+
+            elif object_type == ObjectType.SEQUENCE:
+                query = """
+                    SELECT min_value, max_value, increment_by, cycle_flag, cache_size
+                    FROM user_sequences
+                    WHERE sequence_name = :name
+                """
+                cursor.execute(query, {'name': object_name.upper()})
+                row = cursor.fetchone()
+                if row:
+                    min_val, max_val, incr, cycle, cache = row
+                    ddl = f"CREATE SEQUENCE {object_name}\n"
+                    ddl += f"  MINVALUE {min_val}\n"
+                    ddl += f"  MAXVALUE {max_val}\n"
+                    ddl += f"  INCREMENT BY {incr}\n"
+                    ddl += f"  {'CYCLE' if cycle == 'Y' else 'NOCYCLE'}\n"
+                    ddl += f"  CACHE {cache}"
+                    return ddl
+                return None
+
+            else:
+                query = "SELECT DBMS_METADATA.GET_DDL(:type, :name) FROM DUAL"
+                cursor.execute(query, {
+                    'type': object_type.value,
+                    'name': object_name.upper()
+                })
+                row = cursor.fetchone()
+                if row and row[0]:
+                    return row[0].read() if hasattr(row[0], 'read') else str(row[0])
+                return None
+
+        except Exception as e:
+            logging.error(f"DDL取得エラー ({object_name}): {e}", exc_info=True)
+            return None
+
+        finally:
+            cursor.close()
+
+    def drop_object(
+        self,
+        object_name: str,
+        object_type: ObjectType
+    ) -> Tuple[bool, Optional[str]]:
+        """ターゲットDBのオブジェクトを削除。
+
+        Returns:
+            (成功フラグ, エラーメッセージ)
+        """
+        conn = self.connect_target()
+        cursor = conn.cursor()
+
+        try:
+            if object_type == ObjectType.PACKAGE:
+                drop_sql = f"DROP PACKAGE {object_name}"
+            else:
+                drop_sql = f"DROP {object_type.value} {object_name}"
+
+            logging.info(f"実行: {drop_sql}")
+            cursor.execute(drop_sql)
+            conn.commit()
+            return True, None
+
+        except Exception as e:
+            error_str = str(e).upper()
+            if "ORA-04043" in error_str or "NOT EXIST" in error_str:
+                logging.info(f"{object_name} は存在しません（スキップ）")
+                return True, None
+            logging.error(f"DROP失敗 ({object_name}): {e}")
+            return False, str(e)
+
+        finally:
+            cursor.close()
+
+    def create_object(
+        self,
+        ddl: str,
+        object_name: str
+    ) -> Tuple[bool, Optional[str]]:
+        """ターゲットDBにオブジェクトを作成。
+
+        Returns:
+            (成功フラグ, エラーメッセージ)
+        """
+        conn = self.connect_target()
+        cursor = conn.cursor()
+
+        try:
+            logging.info(f"オブジェクト作成: {object_name}")
+            cursor.execute(ddl)
+            conn.commit()
+            return True, None
+
+        except Exception as e:
+            logging.error(f"CREATE失敗 ({object_name}): {e}")
+            return False, str(e)
+
+        finally:
+            cursor.close()
+
+    def copy_objects(
+        self,
+        object_types: List[ObjectType],
+        drop_before_create: bool = True,
+        skip_errors: bool = True,
+        name_patterns: Optional[List[str]] = None,
+        specific_objects: Optional[List["DatabaseObject"]] = None,
+        is_dry_run: bool = False,
+        progress_callback: Optional[Callable[[int, int, str], None]] = None
+    ) -> List["CopyResult"]:
+        """オブジェクトをコピー。
+
+        Args:
+            object_types: コピーするオブジェクトタイプ
+            drop_before_create: 作成前に削除するか
+            skip_errors: エラー発生時も続行するか
+            name_patterns: オブジェクト名のフィルタパターン
+            specific_objects: 特定のオブジェクトリスト
+            is_dry_run: ドライランモード（検証のみ）
+            progress_callback: 進捗コールバック(現在数, 総数, メッセージ)
+
+        Returns:
+            コピー結果のリスト
+        """
+        results: List[CopyResult] = []
+
+        if specific_objects is not None:
+            objects = specific_objects
+        else:
+            objects = self.get_source_objects(object_types, name_patterns)
+
+        objects = self._sort_objects_by_priority(objects)
+        total_count = len(objects)
+        logging.info(f"コピー対象: {total_count} 件")
+
+        if is_dry_run:
+            logging.info("【ドライランモード】実際のコピーは実行されません")
+
+        for idx, obj in enumerate(objects, 1):
+            if progress_callback:
+                progress_callback(idx, total_count, f"{obj.object_type.value} {obj.name}")
+
+            logging.info(f"[{idx}/{total_count}] 処理中: {obj.object_type.value} {obj.name}")
+
+            try:
+                ddl = self.get_object_ddl(obj.name, obj.object_type)
+
+                if not ddl:
+                    error_msg = "DDLの取得に失敗しました"
+                    logging.error(error_msg)
+                    results.append(CopyResult(
+                        object_name=obj.name,
+                        object_type=obj.object_type,
+                        success=False,
+                        error_message=error_msg
+                    ))
+                    if not skip_errors:
+                        break
+                    continue
+
+                should_drop = (
+                    obj.object_type not in [ObjectType.TABLE, ObjectType.VIEW]
+                    or drop_before_create
+                )
+
+                if should_drop:
+                    if is_dry_run:
+                        logging.info(f"[DRY-RUN] DROP {obj.object_type.value} {obj.name}")
+                        success, error = True, None
+                    else:
+                        success, error = self.drop_object(obj.name, obj.object_type)
+
+                    if not success and not skip_errors:
+                        results.append(CopyResult(
+                            object_name=obj.name,
+                            object_type=obj.object_type,
+                            success=False,
+                            error_message=f"DROP失敗: {error}"
+                        ))
+                        break
+
+                if is_dry_run:
+                    logging.info(f"[DRY-RUN] CREATE {obj.object_type.value} {obj.name}")
+                    success, error = True, None
+                else:
+                    success, error = self.create_object(ddl, obj.name)
+
+                results.append(CopyResult(
+                    object_name=obj.name,
+                    object_type=obj.object_type,
+                    success=success,
+                    error_message=error
+                ))
+
+                if not success and not skip_errors:
+                    break
+
+            except Exception as e:
+                error_msg = f"予期しないエラー: {e}"
+                logging.error(error_msg, exc_info=True)
+                results.append(CopyResult(
+                    object_name=obj.name,
+                    object_type=obj.object_type,
+                    success=False,
+                    error_message=error_msg
+                ))
+                if not skip_errors:
+                    break
+
+        return results
+
+    def _sort_objects_by_priority(
+        self,
+        objects: List["DatabaseObject"]
+    ) -> List["DatabaseObject"]:
+        """オブジェクトを優先度順にソート（パッケージ優先）。
+
+        コピー順序:
+        1. PACKAGE / PACKAGE BODY
+        2. SEQUENCE
+        3. PROCEDURE / FUNCTION
+        4. TRIGGER
+        5. VIEW / SYNONYM
+        6. TABLE
+        7. その他
+        """
+        priority_map = {
+            ObjectType.PACKAGE: 1,
+            ObjectType.PACKAGE_BODY: 1,
+            ObjectType.SEQUENCE: 2,
+            ObjectType.PROCEDURE: 3,
+            ObjectType.FUNCTION: 3,
+            ObjectType.TRIGGER: 4,
+            ObjectType.VIEW: 5,
+            ObjectType.SYNONYM: 5,
+            ObjectType.TABLE: 6,
+            ObjectType.TYPE: 7,
+        }
+
+        def get_priority(obj: DatabaseObject) -> Tuple[int, str]:
+            return (priority_map.get(obj.object_type, 99), obj.name.upper())
+
+        sorted_objects = sorted(objects, key=get_priority)
+        logging.info("オブジェクトを優先度順にソート: PACKAGE優先")
+        return sorted_objects
+
+    def __del__(self):
+        """デストラクタ。"""
+        try:
+            self.disconnect()
+        except Exception:
+            pass
