@@ -46,7 +46,15 @@ class ConnectionConfig:
         
         Returns:
             DSN文字列
+        
+        Raises:
+            ValueError: ホスト名が空の場合
         """
+        if not self.host:
+            raise ValueError(
+                "ホスト名が空です。\n"
+                "接続形式: ホスト:ポート/サービス名 (例: 192.168.1.1:1521/ORCL)"
+            )
         return f"{self.host}:{self.port}/{self.service}"
 
 
@@ -95,6 +103,15 @@ class DatabaseManager:
     def _format_connection_error(self, error: Exception) -> str:
         """接続エラーをユーザー向けメッセージに整形。"""
         error_text = str(error)
+
+        if "DPY-3001" in error_text and "bequeath" in error_text:
+            return (
+                "DPY-3001: bequeath接続は thin mode では使用できません。\n\n"
+                "原因: ホスト名が空か、ローカルIPC接続が指定されています。\n\n"
+                "対処方法:\n"
+                "  ホスト名・ポート・サービス名を正しく入力してください。\n"
+                "  例: ホスト=192.168.1.1, ポート=1521, サービス名=ORCL"
+            )
 
         if "DPY-3016" in error_text and "x509" in error_text:
             return (
