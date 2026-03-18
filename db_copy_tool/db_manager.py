@@ -113,6 +113,22 @@ class DatabaseManager:
                 "  例: ホスト=192.168.1.1, ポート=1521, サービス名=ORCL"
             )
 
+        if "DPY-3015" in error_text and "password verifier" in error_text:
+            return (
+                "DPY-3015: このOracle DBのパスワード認証方式は thin mode では使用できません。\n\n"
+                "原因: 接続先DBが古い認証方式（Oracle 10g以前の DES/SHA-1ハッシュ）を使用しています。\n"
+                "  python-oracledb thin mode は 11g以降の認証方式（SHA-512）のみ対応しています。\n\n"
+                "対処方法:\n"
+                "  【方法1】DBサーバー管理者にパスワードをリセットしてもらう（推奨）\n"
+                "    ALTER USER <ユーザー名> IDENTIFIED BY <パスワード>;\n"
+                "    ※ Oracle 11g以降の形式で再作成されます\n\n"
+                "  【方法2】DBサーバーの sqlnet.ora で新形式を有効化\n"
+                "    SQLNET.ALLOWED_LOGON_VERSION_SERVER=11\n"
+                "    SQLNET.ALLOWED_LOGON_VERSION_CLIENT=11\n\n"
+                "  【方法3】DBサーバーのパラメータを確認\n"
+                "    SELECT * FROM v$parameter WHERE name LIKE '%allowed_logon%';"
+            )
+
         if "DPY-3016" in error_text and "x509" in error_text:
             return (
                 "DPY-3016: oracledb thin mode で cryptography.x509 の読み込みに失敗しました。\n"
