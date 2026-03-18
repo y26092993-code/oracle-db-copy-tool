@@ -17,6 +17,37 @@ except ImportError:
     except ImportError:
         raise ImportError("oracledb または cx_Oracle のインストールが必要です")
 
+# thick mode の初期化は1プロセスに1回のみ可能
+_thick_mode_initialized: bool = False
+
+
+def init_thick_mode(client_lib_dir: Optional[str] = None) -> None:
+    """oracledb を thick mode で初期化する（プロセスで1回のみ有効）。
+
+    Args:
+        client_lib_dir: Oracle Instant Client のディレクトリパス。
+                        None の場合は環境変数 PATH / LD_LIBRARY_PATH から自動検索。
+    """
+    global _thick_mode_initialized
+    if _thick_mode_initialized:
+        logging.info("thick mode はすでに初期化済みです")
+        return
+    try:
+        if client_lib_dir:
+            oracledb.init_oracle_client(lib_dir=client_lib_dir)
+        else:
+            oracledb.init_oracle_client()
+        _thick_mode_initialized = True
+        logging.info(f"thick mode で初期化しました (lib_dir={client_lib_dir!r})")
+    except Exception as e:
+        raise RuntimeError(
+            f"Oracle Instant Client の読み込みに失敗しました。\n\n"
+            f"エラー: {e}\n\n"
+            "対処方法:\n"
+            "  Oracle Instant Client をダウンロードして、パスを正しく指定してください。\n"
+            "  https://www.oracle.com/database/technologies/instant-client/downloads.html"
+        ) from e
+
 
 class ObjectType(Enum):
     """データベースオブジェクトの種類。"""
@@ -84,7 +115,9 @@ class DatabaseManager:
     def __init__(
         self,
         source_config: ConnectionConfig,
-        target_config: ConnectionConfig
+        target_config: ConnectionConfig,
+        thick_mode: bool = False,
+        client_lib_dir: Optional[str] = None
     ):
         """初期化。
         
@@ -97,8 +130,11 @@ class DatabaseManager:
         self.source_conn: Optional[oracledb.Connection] = None
         self.target_conn: Optional[oracledb.Connection] = None
         self.last_connection_error: Optional[str] = None
-        
-        logging.info("DatabaseManager初期化完了")
+
+        if thick_mode:
+            init_thick_mode(client_lib_dir)
+
+        logging.info(f"DatabaseManager初期化完了 (mode={'thick' if thick_mode else 'thin'})")
 
     def _format_connection_error(self, error: Exception) -> str:
         """接続エラーをユーザー向けメッセージに整形。"""

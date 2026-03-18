@@ -17,7 +17,8 @@ from db_manager import (
     DatabaseObject,
     ObjectType,
     CopyResult,
-    ConnectionConfig
+    ConnectionConfig,
+    init_thick_mode,
 )
 from tnsnames_parser import TnsNamesParser, TnsEntry
 
@@ -181,6 +182,55 @@ class DBCopyToolGUI:
             command=self._load_config,
             width=20
         ).pack(side=tk.LEFT, padx=5)
+
+        # 接続モード選択
+        mode_frame = ttk.LabelFrame(
+            parent,
+            text="▶ 接続モード（認証エラー DPY-3015 が出る場合は Thick mode を試してください）",
+            padding=8
+        )
+        mode_frame.grid(row=source_row+3, column=0, padx=10, pady=6, sticky="ew")
+
+        self.thick_mode_var = tk.BooleanVar(value=False)
+
+        thin_rb = ttk.Radiobutton(
+            mode_frame,
+            text="Thin mode  （デフォルト・追加ソフトウェア不要）",
+            variable=self.thick_mode_var,
+            value=False,
+            command=self._on_mode_changed
+        )
+        thin_rb.grid(row=0, column=0, columnspan=2, sticky="w", padx=5, pady=2)
+
+        thick_rb = ttk.Radiobutton(
+            mode_frame,
+            text="Thick mode  （Oracle Instant Client 必要・全認証方式対応）",
+            variable=self.thick_mode_var,
+            value=True,
+            command=self._on_mode_changed
+        )
+        thick_rb.grid(row=1, column=0, columnspan=2, sticky="w", padx=5, pady=2)
+
+        ttk.Label(mode_frame, text="Instant Client パス:").grid(
+            row=2, column=0, sticky="e", padx=5, pady=4
+        )
+        self.client_lib_entry = ttk.Entry(mode_frame, width=45, state="disabled")
+        self.client_lib_entry.grid(row=2, column=1, sticky="ew", padx=5, pady=4)
+        self.client_lib_browse_btn = ttk.Button(
+            mode_frame,
+            text="参照...",
+            command=self._browse_client_lib,
+            state="disabled",
+            width=8
+        )
+        self.client_lib_browse_btn.grid(row=2, column=2, padx=5, pady=4)
+        ttk.Label(
+            mode_frame,
+            text="  例: C:\\oracle\\instantclient_21_3  (空の場合は PATH から自動検索)",
+            foreground="gray",
+            font=("", 8)
+        ).grid(row=3, column=0, columnspan=3, sticky="w", padx=5)
+        mode_frame.columnconfigure(1, weight=1)
 
     def _create_db_fields(self, parent: ttk.Frame, prefix: str) -> None:
         """DB接続フィールドを作成。
@@ -546,6 +596,25 @@ class DBCopyToolGUI:
         )
         self.log_text.pack(fill=tk.BOTH, expand=True)
 
+    def _on_mode_changed(self) -> None:
+        """Thin/Thick mode 切り替え時の処理。"""
+        if self.thick_mode_var.get():
+            self.client_lib_entry.config(state="normal")
+            self.client_lib_browse_btn.config(state="normal")
+        else:
+            self.client_lib_entry.config(state="disabled")
+            self.client_lib_browse_btn.config(state="disabled")
+
+    def _browse_client_lib(self) -> None:
+        """Oracle Instant Client ディレクトリを選択。"""
+        from tkinter import filedialog
+        directory = filedialog.askdirectory(
+            title="Oracle Instant Client ディレクトリを選択"
+        )
+        if directory:
+            self.client_lib_entry.delete(0, tk.END)
+            self.client_lib_entry.insert(0, directory)
+
     def _test_connections(self) -> None:
         """接続テストを実行。"""
         self._log("接続テストを開始...")
@@ -560,7 +629,13 @@ class DBCopyToolGUI:
             self._log(f"ターゲットDB接続中: {target_config.host}:{target_config.port}/{target_config.service}")
             
             # DatabaseManagerの作成
-            self.db_manager = DatabaseManager(source_config, target_config)
+            thick_mode = self.thick_mode_var.get()
+            client_lib_dir = self.client_lib_entry.get().strip() if thick_mode else None
+            self.db_manager = DatabaseManager(
+                source_config, target_config,
+                thick_mode=thick_mode,
+                client_lib_dir=client_lib_dir or None
+            )
             
             # 接続テスト
             if self.db_manager.test_connections():
@@ -1285,6 +1360,10 @@ class DBCopyToolGUI:
                     "port": self.entries["target_port"].get().strip(),
                     "service": self.entries["target_service"].get().strip(),
                     "username": self.entries["target_username"].get().strip(),
+                },
+                "connection_mode": {
+                    "thick_mode": self.thick_mode_var.get(),
+                    "client_lib_dir": self.client_lib_entry.get().strip() or "",
                 }
             }
             
@@ -1372,7 +1451,17 @@ class DBCopyToolGUI:
                 if "password" in target:
                     self.entries["target_password"].delete(0, tk.END)
                     self.entries["target_password"].insert(0, target["password"])
-            
+
+            # 接続モード設定を読み込み
+            if "connection_mode" in config:
+                mode = config["connection_mode"]
+                self.thick_mode_var.set(bool(mode.get("thick_mode", False)))
+                self._on_mode_changed()
+                lib_dir = mode.get("client_lib_dir", "")
+                if lib_dir:
+                    self.client_lib_entry.delete(0, tk.END)
+                    self.client_lib_entry.insert(0, lib_dir)
+
             self._log(f"設定を読み込みました: {filename}", "success")
             messagebox.showinfo("成功", f"設定ファイルを読み込みました\n\n{filename}")
         
