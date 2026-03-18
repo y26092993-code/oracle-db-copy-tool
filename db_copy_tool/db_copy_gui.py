@@ -102,134 +102,105 @@ class DBCopyToolGUI:
         """接続設定タブを作成。"""
         parent = self.connection_frame
         parent.columnconfigure(0, weight=1)
+        parent.rowconfigure(0, weight=1)
 
-        # tnsnames.ora 読 込みボタン
-        tns_toolbar = ttk.Frame(parent)
-        tns_toolbar.grid(row=0, column=0, padx=10, pady=(10, 5), sticky="ew")
-        
+        # スクロール対応キャンバス
+        canvas = tk.Canvas(parent, highlightthickness=0)
+        scrollbar = ttk.Scrollbar(parent, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=scrollbar.set)
+        scrollbar.grid(row=0, column=1, sticky="ns")
+        canvas.grid(row=0, column=0, sticky="nsew")
+
+        inner = ttk.Frame(canvas)
+        inner_window = canvas.create_window((0, 0), window=inner, anchor="nw")
+
+        def _on_inner_configure(event):
+            canvas.configure(scrollregion=canvas.bbox("all"))
+
+        def _on_canvas_configure(event):
+            canvas.itemconfig(inner_window, width=event.width)
+
+        def _on_mousewheel(event):
+            canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+
+        inner.bind("<Configure>", _on_inner_configure)
+        canvas.bind("<Configure>", _on_canvas_configure)
+        canvas.bind("<Enter>", lambda e: canvas.bind_all("<MouseWheel>", _on_mousewheel))
+        canvas.bind("<Leave>", lambda e: canvas.unbind_all("<MouseWheel>"))
+
+        inner.columnconfigure(0, weight=1)
+        inner.columnconfigure(1, weight=1)
+
+        # tnsnames.ora ツールバー（2列にまたがる）
+        tns_toolbar = ttk.Frame(inner)
+        tns_toolbar.grid(row=0, column=0, columnspan=2, padx=10, pady=(8, 4), sticky="ew")
+
         if self.tns_parser and self.tns_parser.has_tnsnames():
             info_text = f"tnsnames.ora: {self.tns_parser.get_tnsnames_path()}"
-            ttk.Label(
-                tns_toolbar,
-                text=info_text,
-                foreground="green"
-            ).pack(side=tk.LEFT, padx=5)
+            ttk.Label(tns_toolbar, text=info_text, foreground="green").pack(side=tk.LEFT, padx=5)
         else:
-            ttk.Label(
-                tns_toolbar,
-                text="tnsnames.ora が見つかりません",
-                foreground="orange"
-            ).pack(side=tk.LEFT, padx=5)
-        
-        ttk.Button(
-            tns_toolbar,
-            text="tnsnames.ora を選択",
-            command=self._select_tnsnames_file,
-            width=20
-        ).pack(side=tk.LEFT, padx=5)
-        
-        ttk.Button(
-            tns_toolbar,
-            text="読み込み結果を表示",
-            command=self._show_tnsnames_entries,
-            width=20
-        ).pack(side=tk.LEFT, padx=5)
-        
-        # 画面内に収めるため、一覧の埋め込み表示は行わずダイアログ表示のみにする。
-        source_row = 1
-        
-        # ソースDB設定
-        source_frame = ttk.LabelFrame(
-            parent,
-            text="ソースデータベース（コピー元）",
-            padding=10
-        )
-        source_frame.grid(row=source_row, column=0, padx=10, pady=6, sticky="ew")
-        
-        self._create_db_fields(source_frame, "source")
-        
-        # ターゲットDB設定
-        target_frame = ttk.LabelFrame(
-            parent,
-            text="ターゲットデータベース（コピー先）",
-            padding=10
-        )
-        target_frame.grid(row=source_row+1, column=0, padx=10, pady=6, sticky="ew")
-        
-        self._create_db_fields(target_frame, "target")
-        
-        # 接続テストボタン
-        button_frame = ttk.Frame(parent)
-        button_frame.grid(row=source_row+2, column=0, pady=8)
-        
-        ttk.Button(
-            button_frame,
-            text="接続テスト",
-            command=self._test_connections,
-            width=20
-        ).pack(side=tk.LEFT, padx=5)
-        
-        ttk.Button(
-            button_frame,
-            text="設定を保存",
-            command=self._save_config,
-            width=20
-        ).pack(side=tk.LEFT, padx=5)
-        
-        ttk.Button(
-            button_frame,
-            text="設定を読込",
-            command=self._load_config,
-            width=20
-        ).pack(side=tk.LEFT, padx=5)
+            ttk.Label(tns_toolbar, text="tnsnames.ora が見つかりません",
+                      foreground="orange").pack(side=tk.LEFT, padx=5)
 
-        # 接続モード選択
+        ttk.Button(tns_toolbar, text="tnsnames.ora を選択",
+                   command=self._select_tnsnames_file, width=20).pack(side=tk.LEFT, padx=5)
+        ttk.Button(tns_toolbar, text="読み込み結果を表示",
+                   command=self._show_tnsnames_entries, width=20).pack(side=tk.LEFT, padx=5)
+
+        # ソース／ターゲット DB を横並びに配置
+        source_frame = ttk.LabelFrame(inner, text="ソースデータベース（コピー元）", padding=8)
+        source_frame.grid(row=1, column=0, padx=(10, 4), pady=4, sticky="nsew")
+        self._create_db_fields(source_frame, "source")
+
+        target_frame = ttk.LabelFrame(inner, text="ターゲットデータベース（コピー先）", padding=8)
+        target_frame.grid(row=1, column=1, padx=(4, 10), pady=4, sticky="nsew")
+        self._create_db_fields(target_frame, "target")
+
+        # ボタン行
+        button_frame = ttk.Frame(inner)
+        button_frame.grid(row=2, column=0, columnspan=2, pady=6)
+
+        ttk.Button(button_frame, text="接続テスト",
+                   command=self._test_connections, width=20).pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="設定を保存",
+                   command=self._save_config, width=20).pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="設定を読込",
+                   command=self._load_config, width=20).pack(side=tk.LEFT, padx=5)
+
+        # 接続モード選択（2列にまたがる）
         mode_frame = ttk.LabelFrame(
-            parent,
+            inner,
             text="▶ 接続モード（認証エラー DPY-3015 が出る場合は Thick mode を試してください）",
-            padding=8
+            padding=6
         )
-        mode_frame.grid(row=source_row+3, column=0, padx=10, pady=6, sticky="ew")
+        mode_frame.grid(row=3, column=0, columnspan=2, padx=10, pady=(4, 8), sticky="ew")
 
         self.thick_mode_var = tk.BooleanVar(value=False)
 
-        thin_rb = ttk.Radiobutton(
-            mode_frame,
-            text="Thin mode  （デフォルト・追加ソフトウェア不要）",
-            variable=self.thick_mode_var,
-            value=False,
-            command=self._on_mode_changed
-        )
-        thin_rb.grid(row=0, column=0, columnspan=2, sticky="w", padx=5, pady=2)
+        ttk.Radiobutton(mode_frame,
+                        text="Thin mode  （デフォルト・追加ソフトウェア不要）",
+                        variable=self.thick_mode_var, value=False,
+                        command=self._on_mode_changed
+                        ).grid(row=0, column=0, columnspan=3, sticky="w", padx=5, pady=2)
 
-        thick_rb = ttk.Radiobutton(
-            mode_frame,
-            text="Thick mode  （Oracle Instant Client 必要・全認証方式対応）",
-            variable=self.thick_mode_var,
-            value=True,
-            command=self._on_mode_changed
-        )
-        thick_rb.grid(row=1, column=0, columnspan=2, sticky="w", padx=5, pady=2)
+        ttk.Radiobutton(mode_frame,
+                        text="Thick mode  （Oracle Instant Client 必要・全認証方式対応）",
+                        variable=self.thick_mode_var, value=True,
+                        command=self._on_mode_changed
+                        ).grid(row=1, column=0, columnspan=3, sticky="w", padx=5, pady=2)
 
         ttk.Label(mode_frame, text="Instant Client パス:").grid(
-            row=2, column=0, sticky="e", padx=5, pady=4
-        )
+            row=2, column=0, sticky="e", padx=5, pady=3)
         self.client_lib_entry = ttk.Entry(mode_frame, width=45, state="disabled")
-        self.client_lib_entry.grid(row=2, column=1, sticky="ew", padx=5, pady=4)
+        self.client_lib_entry.grid(row=2, column=1, sticky="ew", padx=5, pady=3)
         self.client_lib_browse_btn = ttk.Button(
-            mode_frame,
-            text="参照...",
-            command=self._browse_client_lib,
-            state="disabled",
-            width=8
-        )
-        self.client_lib_browse_btn.grid(row=2, column=2, padx=5, pady=4)
-        ttk.Label(
-            mode_frame,
-            text="  例: C:\\oracle\\instantclient_21_3  (空の場合は PATH から自動検索)",
-            foreground="gray",
-            font=("", 8)
-        ).grid(row=3, column=0, columnspan=3, sticky="w", padx=5)
+            mode_frame, text="参照...", command=self._browse_client_lib,
+            state="disabled", width=8)
+        self.client_lib_browse_btn.grid(row=2, column=2, padx=5, pady=3)
+        ttk.Label(mode_frame,
+                  text="  例: C:\\oracle\\instantclient_21_3  (空の場合は PATH から自動検索)",
+                  foreground="gray", font=("", 8)
+                  ).grid(row=3, column=0, columnspan=3, sticky="w", padx=5)
         mode_frame.columnconfigure(1, weight=1)
 
     def _create_db_fields(self, parent: ttk.Frame, prefix: str) -> None:
@@ -252,8 +223,8 @@ class DBCopyToolGUI:
         tns_section = ttk.LabelFrame(parent, text="方法1: TNS エントリから選択", padding=5)
         tns_section.grid(row=row, column=0, columnspan=2, sticky="ew", padx=5, pady=3)
         
-        help_text = "tnsnames.ora から登録済みの接続設定を選択（ホスト・ポート・サービス名が自動入力されます）"
-        ttk.Label(tns_section, text=help_text, foreground="gray", font=("", 8)).pack(anchor="w", padx=5, pady=(0, 3))
+        help_text = "登録済みの接続設定を選択（自動入力されます）"
+        ttk.Label(tns_section, text=help_text, foreground="gray", font=("", 8)).pack(anchor="w", padx=5, pady=(0, 2))
         
         # tnsnames.ora が読み込まれている場合はエントリを表示、そうでない場合は "未設定" を表示
         if self.tns_parser and self.tns_parser.has_tnsnames():
@@ -268,7 +239,7 @@ class DBCopyToolGUI:
             tns_section,
             values=combo_values,
             state=combo_state,
-            width=38
+            width=22
         )
         tns_combo.set("（手動入力）")
         tns_combo.pack(fill="x", padx=5, pady=3)
@@ -280,16 +251,9 @@ class DBCopyToolGUI:
         self.tns_combos[prefix] = tns_combo
         row += 1
         
-        # または（手動入力）テキスト
-        ttk.Label(parent, text="─────────── または ───────────", 
-                 foreground="gray", font=("", 8)).grid(
-            row=row, column=0, columnspan=2, sticky="ew", padx=5, pady=(3, 3)
-        )
-        row += 1
-        
         # 手動入力セクション
         manual_section = ttk.LabelFrame(parent, text="方法2: 手動で接続情報を入力", padding=5)
-        manual_section.grid(row=row, column=0, columnspan=2, sticky="ew", padx=5, pady=3)
+        manual_section.grid(row=row, column=0, columnspan=2, sticky="ew", padx=5, pady=(2, 3))
         
         connection_fields = [
             ("ホスト:", "host"),
@@ -299,11 +263,11 @@ class DBCopyToolGUI:
         
         for i, (label, field) in enumerate(connection_fields):
             ttk.Label(manual_section, text=label).grid(
-                row=i, column=0, sticky="e", padx=5, pady=3
+                row=i, column=0, sticky="e", padx=5, pady=2
             )
-            
-            entry = ttk.Entry(manual_section, width=40)
-            entry.grid(row=i, column=1, sticky="ew", padx=5, pady=3)
+
+            entry = ttk.Entry(manual_section, width=22)
+            entry.grid(row=i, column=1, sticky="ew", padx=5, pady=2)
             
             # デフォルト値
             if field == "port":
@@ -325,11 +289,11 @@ class DBCopyToolGUI:
         
         for i, (label, field) in enumerate(auth_fields):
             ttk.Label(auth_section, text=label, foreground="red" if "*" in label else "black").grid(
-                row=i, column=0, sticky="e", padx=5, pady=3
+                row=i, column=0, sticky="e", padx=5, pady=2
             )
-            
-            entry = ttk.Entry(auth_section, width=40)
-            entry.grid(row=i, column=1, sticky="ew", padx=5, pady=3)
+
+            entry = ttk.Entry(auth_section, width=22)
+            entry.grid(row=i, column=1, sticky="ew", padx=5, pady=2)
             
             # パスワードフィールドは表示を隠す
             if field == "password":
