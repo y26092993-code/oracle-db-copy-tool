@@ -81,12 +81,12 @@ class ConnectionConfig:
         Raises:
             ValueError: ホスト名が空の場合
         """
-        if not self.host:
+        if not self.host.strip():
             raise ValueError(
                 "ホスト名が空です。\n"
                 "接続形式: ホスト:ポート/サービス名 (例: 192.168.1.1:1521/ORCL)"
             )
-        return f"{self.host}:{self.port}/{self.service}"
+        return f"{self.host.strip()}:{self.port}/{self.service}"
 
 
 @dataclass
@@ -143,9 +143,14 @@ class DatabaseManager:
         if "DPY-3001" in error_text and "bequeath" in error_text:
             return (
                 "DPY-3001: bequeath接続は thin mode では使用できません。\n\n"
-                "原因: ホスト名が空か、ローカルIPC接続が指定されています。\n\n"
+                "考えられる原因:\n"
+                "  ① ホスト名が空のまま接続テストを実行した\n"
+                "  ② tnsnames.ora を手動選択後にTNSエントリを選んだが\n"
+                "     ホスト/ポート/サービス名が自動入力されなかった\n"
+                "     → TNSエントリを選択し直してください\n"
+                "  ③ tnsnames.ora のエントリが BEQ (ローカルIPC) プロトコルを使用している\n\n"
                 "対処方法:\n"
-                "  ホスト名・ポート・サービス名を正しく入力してください。\n"
+                "  ホスト名・ポート・サービス名が正しく入力されているか確認してください。\n"
                 "  例: ホスト=192.168.1.1, ポート=1521, サービス名=ORCL"
             )
 

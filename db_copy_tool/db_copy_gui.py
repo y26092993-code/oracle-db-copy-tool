@@ -1201,6 +1201,18 @@ class DBCopyToolGUI:
             self.entries[f"{prefix}_service"].config(state="readonly")
             
             self._log(f"TNSエントリ '{selected}' の接続情報を読み込みました（接続情報は自動入力、認証情報は手動入力してください）", "success")
+        else:
+            # HOST が解析できなかった場合（BEQプロトコル等）
+            messagebox.showwarning(
+                "TNSエントリ解析失敗",
+                f"TNSエントリ '{selected}' のHOST/PORT情報を解析できませんでした。\n\n"
+                "BEQプロトコル（ローカルIPC）または非標準形式の可能性があります。\n"
+                "ホスト・ポート・サービス名を手動で入力してください。"
+            )
+            # フィールドを編集可能に戻す
+            for field in (f"{prefix}_host", f"{prefix}_port", f"{prefix}_service"):
+                self.entries[field].config(state="normal")
+            self._log(f"警告: TNSエントリ '{selected}' のHOST情報を解析できませんでした。手動で入力してください。", "warning")
     
     def _select_tnsnames_file(self) -> None:
         """tnsnames.ora ファイルを選択。"""
@@ -1236,18 +1248,22 @@ class DBCopyToolGUI:
     def _update_tns_combos(self) -> None:
         """TNSエントリドロップダウンを更新。"""
         if not self.tns_parser or not self.tns_parser.has_tnsnames():
-            # エントリが見つからない場合
             for combo in self.tns_combos.values():
                 combo.config(values=["（手動入力）", "tnsnames.ora が見つかりません"])
             return
-        
-        # エントリを取得してドロップダウンを更新
+
         tns_entries = sorted(self.tns_parser.get_entries().keys())
         combo_values = ["（手動入力）"] + tns_entries
-        
-        for combo in self.tns_combos.values():
+
+        for prefix, combo in self.tns_combos.items():
             combo.config(values=combo_values)
             combo.set("（手動入力）")
+            # 選択イベントを再バインド（手動読込後も機能するように）
+            combo.unbind("<<ComboboxSelected>>")
+            combo.bind(
+                "<<ComboboxSelected>>",
+                lambda e, p=prefix: self._on_tns_selected(p)
+            )
     
     def _show_tnsnames_entries(self) -> None:
         """tnsnames.ora の読み込み結果をダイアログに表示。"""
