@@ -183,6 +183,17 @@ class DatabaseManager:
                 "3. `pyinstaller db_copy_tool.spec` で exe を再生成"
             )
 
+        if "ORA-01017" in error_text:
+            return (
+                "ORA-01017: ユーザー名またはパスワードが正しくありません。\n\n"
+                "確認事項:\n"
+                "  ① ユーザー名・パスワードに誤りがないか確認してください\n"
+                "  ② パスワードは大文字/小文字が区別されます（Oracle 11g以降）\n"
+                "  ③ アカウントがロックされている場合は DBA に解除を依頼してください\n"
+                "    SELECT username, account_status FROM dba_users WHERE username = '<ユーザー名>';\n"
+                "    ALTER USER <ユーザー名> ACCOUNT UNLOCK;"
+            )
+
         return error_text
 
     def _create_connection(self, config: ConnectionConfig) -> oracledb.Connection:
@@ -336,7 +347,7 @@ class DatabaseManager:
             try:
                 if obj_type == ObjectType.PACKAGE:
                     query = """
-                        SELECT object_name, object_type, owner, status,
+                        SELECT object_name, object_type, USER AS owner, status,
                                TO_CHAR(created, 'YYYY-MM-DD HH24:MI:SS') as created,
                                TO_CHAR(last_ddl_time, 'YYYY-MM-DD HH24:MI:SS') as last_ddl_time
                         FROM user_objects
@@ -346,7 +357,7 @@ class DatabaseManager:
                     cursor.execute(query)
                 else:
                     query = """
-                        SELECT object_name, object_type, owner, status,
+                        SELECT object_name, object_type, USER AS owner, status,
                                TO_CHAR(created, 'YYYY-MM-DD HH24:MI:SS') as created,
                                TO_CHAR(last_ddl_time, 'YYYY-MM-DD HH24:MI:SS') as last_ddl_time
                         FROM user_objects
@@ -402,7 +413,7 @@ class DatabaseManager:
             try:
                 if obj_type == ObjectType.PACKAGE:
                     query = """
-                        SELECT object_name, object_type, owner, status,
+                        SELECT object_name, object_type, USER AS owner, status,
                                TO_CHAR(created, 'YYYY-MM-DD HH24:MI:SS') as created,
                                TO_CHAR(last_ddl_time, 'YYYY-MM-DD HH24:MI:SS') as last_ddl_time
                         FROM user_objects
@@ -412,7 +423,7 @@ class DatabaseManager:
                     cursor.execute(query)
                 else:
                     query = """
-                        SELECT object_name, object_type, owner, status,
+                        SELECT object_name, object_type, USER AS owner, status,
                                TO_CHAR(created, 'YYYY-MM-DD HH24:MI:SS') as created,
                                TO_CHAR(last_ddl_time, 'YYYY-MM-DD HH24:MI:SS') as last_ddl_time
                         FROM user_objects
