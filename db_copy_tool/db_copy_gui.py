@@ -11,6 +11,7 @@ import logging
 from datetime import datetime
 import yaml
 import os
+import csv
 
 from db_manager import (
     DatabaseManager,
@@ -439,7 +440,21 @@ class DBCopyToolGUI:
         self.display_filter_entry = ttk.Entry(toolbar, width=25)
         self.display_filter_entry.pack(side=tk.LEFT, padx=5)
         self.display_filter_entry.bind('<KeyRelease>', lambda e: self._apply_display_filter())
-        
+
+        ttk.Button(
+            toolbar,
+            text="CSV出力",
+            command=self._export_object_csv,
+            width=12
+        ).pack(side=tk.LEFT, padx=5)
+
+        ttk.Button(
+            toolbar,
+            text="名前コピー",
+            command=self._copy_object_names_to_clipboard,
+            width=12
+        ).pack(side=tk.LEFT, padx=5)
+
         # Treeviewとスクロールバー
         tree_container = ttk.Frame(list_frame)
         tree_container.pack(fill=tk.BOTH, expand=True)
@@ -467,22 +482,29 @@ class DBCopyToolGUI:
         hsb.config(command=self.object_tree.xview)
         
         # 列の設定
-        self.object_tree.column("#0", width=50, minwidth=50, anchor="center")
+        self.object_tree.column("#0", width=25, minwidth=25, anchor="center")
         self.object_tree.column("name", width=250, minwidth=150, anchor="w")
         self.object_tree.column("type", width=120, minwidth=100, anchor="center")
         self.object_tree.column("created", width=150, minwidth=120, anchor="center")
         self.object_tree.column("updated", width=150, minwidth=120, anchor="center")
         
-        # ヘッダーの設定
+        # ヘッダーの設定（クリックでソート）
         self.object_tree.heading("#0", text="✓", anchor="center")
-        self.object_tree.heading("name", text="オブジェクト名", anchor="w")
-        self.object_tree.heading("type", text="種類", anchor="center")
-        self.object_tree.heading("created", text="作成日", anchor="center")
-        self.object_tree.heading("updated", text="更新日", anchor="center")
-        
+        self.object_tree.heading("name", text="オブジェクト名", anchor="w",
+                                  command=lambda: self._sort_object_tree("name"))
+        self.object_tree.heading("type", text="種類", anchor="center",
+                                  command=lambda: self._sort_object_tree("type"))
+        self.object_tree.heading("created", text="作成日", anchor="center",
+                                  command=lambda: self._sort_object_tree("created"))
+        self.object_tree.heading("updated", text="更新日", anchor="center",
+                                  command=lambda: self._sort_object_tree("updated"))
+
         # チェックボックスのクリックイベント
         self.object_tree.bind("<Button-1>", self._on_tree_click)
-        
+
+        # ソート状態管理
+        self.object_tree_sort_state: Dict[str, bool] = {}
+
         # オブジェクトデータを保持（フィルタ用）
         self.all_objects: List[DatabaseObject] = []
         self.object_check_states: Dict[str, bool] = {}  # オブジェクトIDごとのチェック状態
@@ -802,6 +824,56 @@ class DBCopyToolGUI:
         # 新しいTreeview実装では_apply_display_filterが使用される
         pass
 
+    def _sort_object_tree(self, col: str) -> None:
+        """オブジェクト一覧Treeviewを指定列でソート。"""
+        asc = not self.object_tree_sort_state.get(col, False)
+        self.object_tree_sort_state[col] = asc
+
+        items = [(self.object_tree.set(iid, col).lower(), iid)
+                 for iid in self.object_tree.get_children("")]
+        items.sort(reverse=not asc)
+        for idx, (_, iid) in enumerate(items):
+            self.object_tree.move(iid, "", idx)
+
+        _LABELS = {"name": "オブジェクト名", "type": "種類",
+                   "created": "作成日", "updated": "更新日"}
+        for c, label in _LABELS.items():
+            ind = (" ▲" if asc else " ▼") if c == col else ""
+            a = "w" if c == "name" else "center"
+            self.object_tree.heading(c, text=label + ind, anchor=a,
+                                     command=lambda _c=c: self._sort_object_tree(_c))
+
+    def _export_object_csv(self) -> None:
+        """オブジェクト一覧をCSVファイルに出力。"""
+        filepath = filedialog.asksaveasfilename(
+            defaultextension=".csv",
+            filetypes=[("CSV files", "*.csv"), ("All files", "*.*")],
+            initialfile="objects.csv"
+        )
+        if not filepath:
+            return
+        try:
+            with open(filepath, "w", newline="", encoding="utf-8-sig") as f:
+                writer = csv.writer(f)
+                writer.writerow(["オブジェクト名", "種類", "作成日", "更新日", "選択"])
+                for iid in self.object_tree.get_children(""):
+                    vals = self.object_tree.item(iid, "values")
+                    checked = "✓" if self.object_check_states.get(iid, False) else ""
+                    writer.writerow(list(vals) + [checked])
+            messagebox.showinfo("CSV出力", f"保存しました:\n{filepath}")
+            self._log(f"CSV出力完了: {filepath}")
+        except Exception as e:
+            messagebox.showerror("エラー", f"CSV出力エラー: {e}")
+
+    def _copy_object_names_to_clipboard(self) -> None:
+        """選択中のオブジェクト名をクリップボードへコピー（未選択なら全件）。"""
+        selected = self.object_tree.selection()
+        items = selected if selected else self.object_tree.get_children("")
+        names = [self.object_tree.set(iid, "name") for iid in items]
+        self.root.clipboard_clear()
+        self.root.clipboard_append("\n".join(names))
+        self._log(f"クリップボードにコピーしました ({len(names)} 件)")
+
     def _execute_copy(self) -> None:
         """コピーを実行。"""
         if not self.db_manager:
@@ -968,52 +1040,106 @@ class DBCopyToolGUI:
             return False
     
     def _create_diff_tab(self, notebook: ttk.Notebook, tab_name: str, objects: List[DatabaseObject], description: str) -> None:
-        """差分タブを作成。
-        
-        Args:
-            notebook: ノートブックウィジェット
-            tab_name: タブ名
-            objects: 表示するオブジェクト
-            description: 説明テキスト
-        """
+        """差分タブを作成。"""
         frame = ttk.Frame(notebook)
         notebook.add(frame, text=f"{tab_name} ({len(objects)}件)")
-        
-        # 説明
+
+        # ツールバー
+        toolbar = ttk.Frame(frame)
+        toolbar.pack(fill=tk.X, padx=10, pady=(5, 0))
+
         ttk.Label(
-            frame,
+            toolbar,
             text=description,
             foreground="gray",
             font=("Arial", 9)
-        ).pack(anchor="w", padx=10, pady=5)
-        
+        ).pack(side=tk.LEFT)
+
         # ツリービュー
         tree_frame = ttk.Frame(frame)
         tree_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
-        
+
         scrollbar = ttk.Scrollbar(tree_frame, orient="vertical")
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-        
+
         tree = ttk.Treeview(
             tree_frame,
             columns=("type", "created"),
             show="tree headings",
             height=15,
-            yscrollcommand=scrollbar.set
+            yscrollcommand=scrollbar.set,
+            selectmode="extended"
         )
         tree.pack(fill=tk.BOTH, expand=True)
         scrollbar.config(command=tree.yview)
-        
+
         # 列設定
         tree.column("#0", width=300, minwidth=200, anchor="w")
         tree.column("type", width=120, minwidth=100, anchor="center")
         tree.column("created", width=150, minwidth=120, anchor="center")
-        
-        # ヘッダー設定
-        tree.heading("#0", text="オブジェクト名", anchor="w")
-        tree.heading("type", text="種類", anchor="center")
-        tree.heading("created", text="作成日", anchor="center")
-        
+
+        # ソート状態
+        sort_state: Dict[str, bool] = {}
+        _HEADING = {"#0": "オブジェクト名", "type": "種類", "created": "作成日"}
+
+        def sort_diff_tree(col: str) -> None:
+            asc = not sort_state.get(col, False)
+            sort_state[col] = asc
+            if col == "#0":
+                items = [(tree.item(iid, "text").lower(), iid) for iid in tree.get_children("")]
+            else:
+                items = [(tree.set(iid, col).lower(), iid) for iid in tree.get_children("")]
+            items.sort(reverse=not asc)
+            for idx, (_, iid) in enumerate(items):
+                tree.move(iid, "", idx)
+            for c, label in _HEADING.items():
+                ind = (" ▲" if asc else " ▼") if c == col else ""
+                a = "w" if c == "#0" else "center"
+                tree.heading(c, text=label + ind, anchor=a)
+
+        # ヘッダー設定（クリックでソート）
+        tree.heading("#0", text="オブジェクト名", anchor="w",
+                     command=lambda: sort_diff_tree("#0"))
+        tree.heading("type", text="種類", anchor="center",
+                     command=lambda: sort_diff_tree("type"))
+        tree.heading("created", text="作成日", anchor="center",
+                     command=lambda: sort_diff_tree("created"))
+
+        # CSV出力
+        def export_diff_csv() -> None:
+            filepath = filedialog.asksaveasfilename(
+                defaultextension=".csv",
+                filetypes=[("CSV files", "*.csv"), ("All files", "*.*")],
+                initialfile=f"{tab_name.split('[')[0].strip()}.csv"
+            )
+            if not filepath:
+                return
+            try:
+                with open(filepath, "w", newline="", encoding="utf-8-sig") as f:
+                    writer = csv.writer(f)
+                    writer.writerow(["オブジェクト名", "種類", "作成日"])
+                    for iid in tree.get_children(""):
+                        name = tree.item(iid, "text")
+                        vals = tree.item(iid, "values")
+                        writer.writerow([name] + list(vals))
+                messagebox.showinfo("CSV出力", f"保存しました:\n{filepath}")
+            except Exception as e:
+                messagebox.showerror("エラー", f"CSV出力エラー: {e}")
+
+        # クリップボードコピー
+        def copy_diff_names() -> None:
+            selected = tree.selection()
+            items = selected if selected else tree.get_children("")
+            names = [tree.item(iid, "text") for iid in items]
+            self.root.clipboard_clear()
+            self.root.clipboard_append("\n".join(names))
+
+        # ツールバーにボタン追加
+        ttk.Button(toolbar, text="CSV出力", command=export_diff_csv,
+                   width=10).pack(side=tk.RIGHT, padx=5)
+        ttk.Button(toolbar, text="名前コピー", command=copy_diff_names,
+                   width=10).pack(side=tk.RIGHT, padx=5)
+
         # オブジェクトを表示
         for obj in objects:
             tree.insert(
