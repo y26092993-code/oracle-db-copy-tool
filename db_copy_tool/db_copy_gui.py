@@ -522,7 +522,7 @@ class DBCopyToolGUI:
             width=20
         )
         self.execute_button.pack(side=tk.LEFT, padx=5)
-        
+
         self.dry_run_button = ttk.Button(
             button_frame,
             text="ドライラン",
@@ -530,7 +530,14 @@ class DBCopyToolGUI:
             width=20
         )
         self.dry_run_button.pack(side=tk.LEFT, padx=5)
-        
+
+        ttk.Button(
+            button_frame,
+            text="差分確認",
+            command=self._open_diff_view,
+            width=20
+        ).pack(side=tk.LEFT, padx=5)
+
         ttk.Button(
             button_frame,
             text="ログをクリア",
@@ -874,6 +881,17 @@ class DBCopyToolGUI:
         self.root.clipboard_append("\n".join(names))
         self._log(f"クリップボードにコピーしました ({len(names)} 件)")
 
+    def _open_diff_view(self) -> None:
+        """差分確認ウィンドウを「コピー実行」ボタンから独立して開く。"""
+        if not self.db_manager:
+            messagebox.showwarning("警告", "先に接続テストを実行してください")
+            return
+        selected_objects = self._get_selected_objects()
+        if not selected_objects:
+            messagebox.showwarning("警告", "オブジェクト一覧を取得してから確認してください")
+            return
+        self._show_diff_confirmation(selected_objects, view_only=True)
+
     def _execute_copy(self) -> None:
         """コピーを実行。"""
         if not self.db_manager:
@@ -889,7 +907,7 @@ class DBCopyToolGUI:
         
         # 差分確認オプションが有効な場合のみ表示
         if self.show_diff_confirmation.get():
-            if not self._show_diff_confirmation(selected_objects):
+            if not self._show_diff_confirmation(selected_objects, view_only=False):
                 # ユーザーがキャンセルした場合
                 return
         
@@ -924,14 +942,15 @@ class DBCopyToolGUI:
                 selected.append(obj)
         return selected
 
-    def _show_diff_confirmation(self, selected_objects: List[DatabaseObject]) -> bool:
+    def _show_diff_confirmation(self, selected_objects: List[DatabaseObject], view_only: bool = False) -> bool:
         """差分確認ウィンドウを表示。
-        
+
         Args:
             selected_objects: コピー対象のオブジェクト
-            
+            view_only: True の場合は参照のみ（続行/キャンセルボタンなし）
+
         Returns:
-            ユーザーが続行を選択した場合True、キャンセルした場合False
+            view_only=False時にユーザーが続行を選択した場合True。view_only=True時は常にTrue。
         """
         try:
             # ターゲットDB側のオブジェクト取得
@@ -944,6 +963,9 @@ class DBCopyToolGUI:
             only_in_source = diff_result['only_in_source']
             only_in_target = diff_result['only_in_target']
             in_both = diff_result['in_both']
+
+            # "両方に存在" タブで参照するターゲット側辞書
+            target_dict = {(obj.name, obj.object_type): obj for obj in target_objects}
 
             # 「オブジェクト選択」タブのWCフィルタを「ターゲットのみ」にも適用
             name_patterns = self._get_name_patterns()
@@ -999,38 +1021,50 @@ class DBCopyToolGUI:
             # タブ2: ターゲットのみ（TNS表示付き・WCフィルタ適用済み）
             self._create_diff_tab(notebook, f"ターゲットのみ [{tgt_label}]", only_in_target, "このオブジェクトはターゲットに既に存在します")
             
-            # タブ3: 両方に存在
-            self._create_diff_tab(notebook, "両方に存在", in_both, "このオブジェクトは上書きされます")
+            # タブ3: 両方に存在（ソース・ターゲット両方の日付を表示）
+            self._create_diff_tab(notebook, "両方に存在", in_both, "このオブジェクトは上書きされます", target_dict=target_dict)
             
             # ボタンフレーム
             button_frame = ttk.Frame(diff_window)
             button_frame.pack(pady=10)
-            
+
             # ユーザーが選択した結果を保持
             user_choice = {'continue': False}
-            
-            def on_continue():
-                user_choice['continue'] = True
-                diff_window.destroy()
-            
-            ttk.Button(
-                button_frame,
-                text="続行",
-                command=on_continue,
-                width=15
-            ).pack(side=tk.LEFT, padx=5)
-            
-            ttk.Button(
-                button_frame,
-                text="キャンセル",
-                command=diff_window.destroy,
-                width=15
-            ).pack(side=tk.LEFT, padx=5)
-            
-            # ウィンドウが閉じられるまで待機
-            diff_window.wait_window()
-            
-            return user_choice['continue']
+
+            if view_only:
+                # 参照専用モード: 閉じるボタンのみ
+                ttk.Button(
+                    button_frame,
+                    text="閉じる",
+                    command=diff_window.destroy,
+                    width=15
+                ).pack(side=tk.LEFT, padx=5)
+                diff_window.wait_window()
+                return True
+            else:
+                # コピー実行フロー: 続行 / キャンセル
+                def on_continue():
+                    user_choice['continue'] = True
+                    diff_window.destroy()
+
+                ttk.Button(
+                    button_frame,
+                    text="続行",
+                    command=on_continue,
+                    width=15
+                ).pack(side=tk.LEFT, padx=5)
+
+                ttk.Button(
+                    button_frame,
+                    text="キャンセル",
+                    command=diff_window.destroy,
+                    width=15
+                ).pack(side=tk.LEFT, padx=5)
+
+                # ウィンドウが閉じられるまで待機
+                diff_window.wait_window()
+
+                return user_choice['continue']
         
         except Exception as e:
             error_msg = f"差分確認エラー: {str(e)}"
@@ -1039,8 +1073,15 @@ class DBCopyToolGUI:
             messagebox.showerror("エラー", error_msg)
             return False
     
-    def _create_diff_tab(self, notebook: ttk.Notebook, tab_name: str, objects: List[DatabaseObject], description: str) -> None:
-        """差分タブを作成。"""
+    def _create_diff_tab(
+        self,
+        notebook: ttk.Notebook,
+        tab_name: str,
+        objects: List[DatabaseObject],
+        description: str,
+        target_dict: Optional[Dict] = None
+    ) -> None:
+        """差分タブを作成。target_dict が与えられた場合はソース・ターゲット両方の日付を表示。"""
         frame = ttk.Frame(notebook)
         notebook.add(frame, text=f"{tab_name} ({len(objects)}件)")
 
@@ -1062,9 +1103,28 @@ class DBCopyToolGUI:
         scrollbar = ttk.Scrollbar(tree_frame, orient="vertical")
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
 
+        if target_dict is not None:
+            # 両方に存在: ソース・ターゲット両方の作成日・更新日＋DDL比較列を表示
+            cols = ("type", "src_created", "src_updated", "tgt_created", "tgt_updated", "ddl_diff")
+            _HEADING = {
+                "#0": "オブジェクト名",
+                "type": "種類",
+                "src_created": "ソース作成日",
+                "src_updated": "ソース更新日",
+                "tgt_created": "ターゲット作成日",
+                "tgt_updated": "ターゲット更新日",
+                "ddl_diff": "DDL差異",
+            }
+            col_widths = {"type": 120, "src_created": 140, "src_updated": 140,
+                          "tgt_created": 140, "tgt_updated": 140, "ddl_diff": 90}
+        else:
+            cols = ("type", "created")
+            _HEADING = {"#0": "オブジェクト名", "type": "種類", "created": "作成日"}
+            col_widths = {"type": 120, "created": 150}
+
         tree = ttk.Treeview(
             tree_frame,
-            columns=("type", "created"),
+            columns=cols,
             show="tree headings",
             height=15,
             yscrollcommand=scrollbar.set,
@@ -1074,13 +1134,12 @@ class DBCopyToolGUI:
         scrollbar.config(command=tree.yview)
 
         # 列設定
-        tree.column("#0", width=300, minwidth=200, anchor="w")
-        tree.column("type", width=120, minwidth=100, anchor="center")
-        tree.column("created", width=150, minwidth=120, anchor="center")
+        tree.column("#0", width=250, minwidth=150, anchor="w")
+        for col in cols:
+            tree.column(col, width=col_widths[col], minwidth=80, anchor="center")
 
         # ソート状態
         sort_state: Dict[str, bool] = {}
-        _HEADING = {"#0": "オブジェクト名", "type": "種類", "created": "作成日"}
 
         def sort_diff_tree(col: str) -> None:
             asc = not sort_state.get(col, False)
@@ -1098,12 +1157,10 @@ class DBCopyToolGUI:
                 tree.heading(c, text=label + ind, anchor=a)
 
         # ヘッダー設定（クリックでソート）
-        tree.heading("#0", text="オブジェクト名", anchor="w",
-                     command=lambda: sort_diff_tree("#0"))
-        tree.heading("type", text="種類", anchor="center",
-                     command=lambda: sort_diff_tree("type"))
-        tree.heading("created", text="作成日", anchor="center",
-                     command=lambda: sort_diff_tree("created"))
+        for col, label in _HEADING.items():
+            a = "w" if col == "#0" else "center"
+            tree.heading(col, text=label, anchor=a,
+                         command=lambda _c=col: sort_diff_tree(_c))
 
         # CSV出力
         def export_diff_csv() -> None:
@@ -1117,7 +1174,7 @@ class DBCopyToolGUI:
             try:
                 with open(filepath, "w", newline="", encoding="utf-8-sig") as f:
                     writer = csv.writer(f)
-                    writer.writerow(["オブジェクト名", "種類", "作成日"])
+                    writer.writerow(list(_HEADING.values()))
                     for iid in tree.get_children(""):
                         name = tree.item(iid, "text")
                         vals = tree.item(iid, "values")
@@ -1140,15 +1197,190 @@ class DBCopyToolGUI:
         ttk.Button(toolbar, text="名前コピー", command=copy_diff_names,
                    width=10).pack(side=tk.RIGHT, padx=5)
 
+        # 両方に存在タブの場合のみDDL比較ボタンを追加
+        if target_dict is not None:
+            ddl_progress_label = ttk.Label(toolbar, text="", foreground="blue", font=("Arial", 9))
+            ddl_progress_label.pack(side=tk.RIGHT, padx=10)
+
+            ddl_btn = ttk.Button(toolbar, text="DDL比較実行", width=14)
+            ddl_btn.pack(side=tk.RIGHT, padx=5)
+
+            def _run_ddl_compare():
+                ddl_btn.config(state="disabled")
+                iids = list(tree.get_children(""))
+                total = len(iids)
+
+                def _worker():
+                    for i, iid in enumerate(iids, 1):
+                        name = tree.item(iid, "text")
+                        vals = list(tree.item(iid, "values"))
+                        obj_type_val = vals[0]
+                        try:
+                            obj_type_enum = ObjectType(obj_type_val)
+                        except ValueError:
+                            result_str = "取得失敗"
+                        else:
+                            try:
+                                same = self.db_manager.compare_object_ddl(name, obj_type_enum)
+                                if same is None:
+                                    result_str = "取得失敗"
+                                elif same:
+                                    result_str = "同一"
+                                else:
+                                    result_str = "★差異あり"
+                            except Exception:
+                                result_str = "取得失敗"
+
+                        vals[5] = result_str  # ddl_diff列 (index 5)
+                        iid_cap = iid  # closure capture
+                        vals_cap = vals[:]
+                        result_cap = result_str
+                        self.root.after(0, lambda _i=iid_cap, _v=vals_cap, _r=result_cap: (
+                            tree.item(_i, values=_v),
+                            tree.item(_i, tags=("diff",) if _r == "★差異あり" else ("same",) if _r == "同一" else ()),
+                        ))
+                        self.root.after(0, ddl_progress_label.config,
+                                        {"text": f"比較中... {i}/{total}"})
+
+                    self.root.after(0, ddl_progress_label.config, {"text": f"完了 ({total}件)"})
+                    self.root.after(0, ddl_btn.config, {"state": "normal"})
+
+                tree.tag_configure("diff", foreground="red")
+                tree.tag_configure("same", foreground="gray")
+                import threading as _t
+                _t.Thread(target=_worker, daemon=True).start()
+
+            ddl_btn.config(command=_run_ddl_compare)
+
+            # ダブルクリックでDDL比較ウィンドウを開く
+            def _on_double_click(event):
+                iid = tree.identify_row(event.y)
+                if not iid:
+                    return
+                name = tree.item(iid, "text")
+                obj_type_val = tree.set(iid, "type")
+                try:
+                    obj_type_enum = ObjectType(obj_type_val)
+                except ValueError:
+                    return
+                self._show_ddl_diff_window(name, obj_type_enum)
+
+            tree.bind("<Double-1>", _on_double_click)
+
         # オブジェクトを表示
         for obj in objects:
-            tree.insert(
-                "",
-                "end",
-                text=obj.name,
-                values=(obj.object_type.value, obj.created or "N/A")
-            )
+            if target_dict is not None:
+                tgt = target_dict.get((obj.name, obj.object_type))
+                values = (
+                    obj.object_type.value,
+                    obj.created or "N/A",
+                    obj.last_ddl_time or "N/A",
+                    (tgt.created if tgt else None) or "N/A",
+                    (tgt.last_ddl_time if tgt else None) or "N/A",
+                    "─",
+                )
+            else:
+                values = (obj.object_type.value, obj.created or "N/A")
+            tree.insert("", "end", text=obj.name, values=values)
 
+
+    def _show_ddl_diff_window(self, object_name: str, object_type: ObjectType) -> None:
+        """ソース/ターゲットのDDLをサイドバイサイドで比較するウィンドウを表示。"""
+        win = tk.Toplevel(self.root)
+        win.title(f"DDL比較: {object_type.value} {object_name}")
+        win.geometry("1200x700")
+
+        # 上部の情報バー
+        info_frame = ttk.Frame(win)
+        info_frame.pack(fill=tk.X, padx=10, pady=(8, 4))
+        ttk.Label(info_frame, text=f"{object_type.value}  {object_name}",
+                  font=("Arial", 11, "bold")).pack(side=tk.LEFT)
+        status_label = ttk.Label(info_frame, text="取得中...", foreground="blue")
+        status_label.pack(side=tk.LEFT, padx=20)
+
+        # 左右ペイン
+        pane = ttk.PanedWindow(win, orient=tk.HORIZONTAL)
+        pane.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+
+        def _make_pane(title: str) -> scrolledtext.ScrolledText:
+            outer = ttk.LabelFrame(pane, text=title)
+            pane.add(outer, weight=1)
+            txt = scrolledtext.ScrolledText(
+                outer, font=("Courier", 9), wrap=tk.NONE,
+                state="disabled"
+            )
+            # 横スクロール
+            hsb = ttk.Scrollbar(outer, orient="horizontal", command=txt.xview)
+            hsb.pack(side=tk.BOTTOM, fill=tk.X)
+            txt.configure(xscrollcommand=hsb.set)
+            txt.pack(fill=tk.BOTH, expand=True)
+            return txt
+
+        src_text = _make_pane("ソース")
+        tgt_text = _make_pane("ターゲット")
+
+        # 差分のハイライト色
+        for t in (src_text, tgt_text):
+            t.tag_configure("diff_line", background="#ffe0e0")
+            t.tag_configure("same_line", background="")
+
+        def _set_text(widget: scrolledtext.ScrolledText, content: str) -> None:
+            widget.configure(state="normal")
+            widget.delete("1.0", tk.END)
+            widget.insert(tk.END, content)
+            widget.configure(state="disabled")
+
+        def _highlight_diff(
+            src_t: scrolledtext.ScrolledText,
+            tgt_t: scrolledtext.ScrolledText,
+            src_ddl: str,
+            tgt_ddl: str
+        ) -> None:
+            """行単位で差分行をハイライト。"""
+            import difflib
+            src_lines = src_ddl.splitlines()
+            tgt_lines = tgt_ddl.splitlines()
+            matcher = difflib.SequenceMatcher(None, src_lines, tgt_lines)
+
+            for t in (src_t, tgt_t):
+                t.configure(state="normal")
+                t.tag_remove("diff_line", "1.0", tk.END)
+
+            for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+                if tag != "equal":
+                    for lineno in range(i1 + 1, i2 + 1):
+                        src_t.tag_add("diff_line", f"{lineno}.0", f"{lineno}.end+1c")
+                    for lineno in range(j1 + 1, j2 + 1):
+                        tgt_t.tag_add("diff_line", f"{lineno}.0", f"{lineno}.end+1c")
+
+            for t in (src_t, tgt_t):
+                t.configure(state="disabled")
+
+        def _worker():
+            try:
+                src_ddl = self.db_manager.get_object_ddl(
+                    object_name, object_type, use_target=False) or "(DDL取得失敗)"
+                tgt_ddl = self.db_manager.get_object_ddl(
+                    object_name, object_type, use_target=True) or "(DDL取得失敗)"
+            except Exception as e:
+                src_ddl = tgt_ddl = f"(取得エラー: {e})"
+
+            import re as _re
+            def _norm(s: str) -> str:
+                return _re.sub(r'\s+', ' ', s).strip().upper()
+
+            is_same = _norm(src_ddl) == _norm(tgt_ddl)
+            status = "同一" if is_same else "★差異あり"
+            color = "gray" if is_same else "red"
+
+            self.root.after(0, _set_text, src_text, src_ddl)
+            self.root.after(0, _set_text, tgt_text, tgt_ddl)
+            self.root.after(0, status_label.config, {"text": status, "foreground": color})
+            if not is_same:
+                self.root.after(0, _highlight_diff, src_text, tgt_text, src_ddl, tgt_ddl)
+
+        import threading as _t
+        _t.Thread(target=_worker, daemon=True).start()
 
     def _execute_copy_thread(self, selected_objects: List[DatabaseObject], is_dry_run: bool = False) -> None:
         """コピーを実行（スレッド）。

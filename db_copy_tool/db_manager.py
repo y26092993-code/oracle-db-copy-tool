@@ -8,6 +8,7 @@ from enum import Enum
 from typing import List, Optional, Dict, List, Tuple, Callable, Any
 import logging
 import fnmatch
+import re
 
 try:
     import oracledb
@@ -492,18 +493,20 @@ class DatabaseManager:
     def get_object_ddl(
         self,
         object_name: str,
-        object_type: ObjectType
+        object_type: ObjectType,
+        use_target: bool = False
     ) -> Optional[str]:
         """オブジェクトのDDLを取得。
 
         Args:
             object_name: オブジェクト名
             object_type: オブジェクトタイプ
+            use_target: True の場合はターゲットDBから取得
 
         Returns:
             DDL文字列、取得失敗時はNone
         """
-        conn = self.connect_source()
+        conn = self.connect_target() if use_target else self.connect_source()
         cursor = conn.cursor()
 
         try:
@@ -575,6 +578,25 @@ class DatabaseManager:
 
         finally:
             cursor.close()
+
+    def compare_object_ddl(
+        self,
+        object_name: str,
+        object_type: ObjectType
+    ) -> Optional[bool]:
+        """ソース・ターゲットのDDLを比較。
+
+        Returns:
+            True: 同一 / False: 差異あり / None: 取得失敗
+        """
+        def _normalize(s: str) -> str:
+            return re.sub(r'\s+', ' ', s).strip().upper()
+
+        src = self.get_object_ddl(object_name, object_type, use_target=False)
+        tgt = self.get_object_ddl(object_name, object_type, use_target=True)
+        if src is None or tgt is None:
+            return None
+        return _normalize(src) == _normalize(tgt)
 
     def drop_object(
         self,
