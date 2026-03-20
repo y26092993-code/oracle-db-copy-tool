@@ -166,6 +166,8 @@ class DBCopyToolGUI:
                    command=self._save_config, width=20).pack(side=tk.LEFT, padx=5)
         ttk.Button(button_frame, text="設定を読込",
                    command=self._load_config, width=20).pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="認証情報をコピー元→コピー先へコピー",
+                   command=self._copy_auth_to_target, width=30).pack(side=tk.LEFT, padx=5)
 
         # 接続モード選択（2列にまたがる）
         mode_frame = ttk.LabelFrame(
@@ -579,6 +581,15 @@ class DBCopyToolGUI:
             self.client_lib_entry.delete(0, tk.END)
             self.client_lib_entry.insert(0, directory)
 
+    def _copy_auth_to_target(self) -> None:
+        """コピー元のユーザー名・パスワードをコピー先へ複写する"""
+        username = self.entries["source_username"].get()
+        password = self.entries["source_password"].get()
+        self.entries["target_username"].delete(0, tk.END)
+        self.entries["target_username"].insert(0, username)
+        self.entries["target_password"].delete(0, tk.END)
+        self.entries["target_password"].insert(0, password)
+
     def _test_connections(self) -> None:
         """接続テストを実行。"""
         self._log("接続テストを開始...")
@@ -861,6 +872,27 @@ class DBCopyToolGUI:
             only_in_source = diff_result['only_in_source']
             only_in_target = diff_result['only_in_target']
             in_both = diff_result['in_both']
+
+            # 「オブジェクト選択」タブのWCフィルタを「ターゲットのみ」にも適用
+            name_patterns = self._get_name_patterns()
+            if name_patterns:
+                only_in_target = self.db_manager.filter_objects_by_pattern(only_in_target, name_patterns)
+
+            # TNS / 接続情報ラベルを生成
+            def _conn_label(prefix: str) -> str:
+                combo = self.tns_combos.get(prefix)
+                if combo:
+                    val = combo.get()
+                    if val and val not in ("（手動入力）", "tnsnames.ora が見つかりません"):
+                        return val
+                host = self.entries.get(f"{prefix}_host")
+                service = self.entries.get(f"{prefix}_service")
+                h = host.get().strip() if host else ""
+                s = service.get().strip() if service else ""
+                return f"{h}/{s}" if h else (s or "?")
+
+            src_label = _conn_label("source")
+            tgt_label = _conn_label("target")
             
             # 差分確認ウィンドウを作成
             diff_window = tk.Toplevel(self.root)
@@ -889,11 +921,11 @@ class DBCopyToolGUI:
             notebook = ttk.Notebook(diff_window)
             notebook.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
             
-            # タブ1: ソースのみ
-            self._create_diff_tab(notebook, "ソースのみ", only_in_source, "このオブジェクトは新規作成されます")
+            # タブ1: ソースのみ（TNS表示付き）
+            self._create_diff_tab(notebook, f"ソースのみ [{src_label}]", only_in_source, "このオブジェクトは新規作成されます")
             
-            # タブ2: ターゲットのみ
-            self._create_diff_tab(notebook, "ターゲットのみ", only_in_target, "このオブジェクトはターゲットに既に存在します")
+            # タブ2: ターゲットのみ（TNS表示付き・WCフィルタ適用済み）
+            self._create_diff_tab(notebook, f"ターゲットのみ [{tgt_label}]", only_in_target, "このオブジェクトはターゲットに既に存在します")
             
             # タブ3: 両方に存在
             self._create_diff_tab(notebook, "両方に存在", in_both, "このオブジェクトは上書きされます")
