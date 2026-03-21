@@ -35,7 +35,7 @@ class DBCopyToolGUI:
         """
         self.root = root
         self.root.title("Oracle DB オブジェクトコピーツール")
-        self.root.geometry("1200x900")
+        self._setup_window_size()
         
         # ロギング設定
         self._setup_logging()
@@ -62,6 +62,29 @@ class DBCopyToolGUI:
         self._create_widgets()
         
         logging.info("アプリケーション起動")
+
+    def _setup_window_size(self) -> None:
+        """画面解像度に合わせてウィンドウサイズと位置を設定。"""
+        screen_w = self.root.winfo_screenwidth()
+        screen_h = self.root.winfo_screenheight()
+
+        # タスクバー等を考慮して画面の90%を上限とする
+        max_w = int(screen_w * 0.90)
+        max_h = int(screen_h * 0.90)
+
+        win_w = min(1200, max_w)
+        win_h = min(900, max_h)
+
+        # 最小サイズを保証
+        win_w = max(win_w, 900)
+        win_h = max(win_h, 600)
+
+        # 画面中央に配置
+        pos_x = (screen_w - win_w) // 2
+        pos_y = (screen_h - win_h) // 2
+
+        self.root.geometry(f"{win_w}x{win_h}+{pos_x}+{pos_y}")
+        self.root.minsize(900, 600)
 
     def _setup_logging(self) -> None:
         """ロギングの設定。"""
