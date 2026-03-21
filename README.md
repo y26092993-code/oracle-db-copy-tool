@@ -1,374 +1,351 @@
-# Oracle Connect Project
+# Oracle DB オブジェクトコピーツール
 
-## oracle.py - SQLファイル一括実行アプリケーション
+Oracle データベースのオブジェクト（テーブル、ビュー、プロシージャなど）を別のOracle データベースへコピーするGUIアプリケーションです。
 
-指定フォルダ内の SQLファイル（`*.sql`）をアルファベット順に OracleDB へ一括実行するツールです。
+**開発環境のないLAN環境でも使用できる**スタンドアロン実行ファイルとして配布可能です。
+
+## 特徴
+
+- **GUIベース**: 直感的な操作で簡単にデータベースオブジェクトをコピー
+- **HD (1366×768) 対応**: 起動時に画面解像度を自動検出し、ウィンドウサイズを動的調整。画面中央に配置
+- **tnsnames.ora 対応**: Oracle の tnsnames.ora ファイルから接続先を選択可能
+- **Thick mode 対応**: Oracle Instant Client を使用した接続（OS認証・Kerberos・旧形式認証に対応）
+- **オブジェクト一覧表示**: フィルタ結果を表形式で表示、個別にコピー対象を選択可能
+  - オブジェクト名、種類、作成日、更新日を表示
+  - チェックボックスで個別に選択/解除
+  - 「すべて選択」「すべて解除」機能
+  - ヘッダークリックでソート対応
+  - CSV エクスポート機能
+- **2段階フィルタ**:
+  - **ワイルドカードフィルタ**: Oracle LIKE形式（`%`, `_`）でDBから取得するオブジェクトを絞り込み
+  - **表示フィルタ**: 取得済みオブジェクトの表示を絞り込み
+- **複数のオブジェクトタイプに対応**:
+  - テーブル
+  - ビュー
+  - プロシージャ
+  - ファンクション
+  - パッケージ
+  - トリガー
+  - シーケンス
+- **パッケージ優先コピー**: パッケージ→シーケンス→プロシージャ→ビュー→テーブルの順で自動ソート。依存関係を考慮した正しい順序でコピー
+- **ドライランモード**: 実際のコピーを実行せず、検証のみを行える。本番前の確認に最適
+- **進捗表示**: コピー中に「●●個中 ●●個完了」と進捗率をリアルタイム表示
+- **接続テスト機能**: コピー前に接続を確認
+- **差分確認機能**: コピー前にソースと対象DB間のオブジェクト差分を確認（オプション）
+  - DDL 比較機能（ソース/ターゲット間の定義差異を表示）
+  - 差分確認をコピー実行とは独立して単独実行可能
+- **詳細なログ**: 実行状況を逐次表示
+- **エラー処理**: エラー発生時も続行可能、エラーのみ表示機能で効率的に確認
+- **スタンドアロン**: exe形式で配布可能
+
+## 必要な環境
+
+### Pythonで実行する場合
+- Python 3.10以上
+- Oracle Instant Client（Thick mode を使用する場合のみ必要）
+
+### exe実行ファイルで実行する場合
+- Windows 10/11（HD 1366×768 以上の解像度を推奨）
+- Oracle Instant Clientは**不要**（Thin mode の場合。Thick mode 使用時は別途インストール必要）
+
+## インストール
+
+### 1. Pythonで実行する場合
+
+```bash
+# 必要なパッケージをインストール
+pip install -r requirements.txt
+```
+
+### 2. exe実行ファイルをビルドする場合
+
+```bash
+# PyInstallerでビルド
+pyinstaller db_copy_tool.spec
+```
+
+または付属のバッチファイルを実行:
+
+```batch
+build_db_copy_tool.bat
+```
+
+ビルドが完了すると、`dist` フォルダに `DBCopyTool.exe` が作成されます。
+
+## 使い方
+
+### Pythonで実行
+
+```bash
+python db_copy_gui.py
+```
+
+### exe実行ファイルで実行
+
+```
+DBCopyTool.exe
+```
+
+をダブルクリック
+
+## 操作方法
+
+### 1. 接続設定
+
+「接続設定」タブで、ソースデータベース（コピー元）とターゲットデータベース（コピー先）の接続情報を入力します。
+
+#### tnsnames.ora を使用する場合（推奨）
+
+アプリケーションは起動時に自動的に tnsnames.ora ファイルを検索します。検索順序:
+
+1. 環境変数 `TNS_ADMIN` で指定されたディレクトリ
+2. 環境変数 `ORACLE_HOME` 配下の `network/admin` ディレクトリ
+3. 一般的なインストールパス
+
+tnsnames.ora が見つかった場合、各データベース設定欄に **「TNS エントリ」** ドロップダウンが表示されます。
+
+- ドロップダウンから接続先を選択すると、ホスト、ポート、サービス名が自動的に入力されます
+- ユーザー名とパスワードは手動で入力してください
+- 別のファイルを使用する場合は「tnsnames.ora を選択」ボタンをクリック
+
+#### 手動で入力する場合
+
+tnsnames.ora が利用できない場合、または手動入力する場合は以下を入力:
+
+- **ホスト**: データベースサーバーのIPアドレスまたはホスト名
+- **ポート**: リスナーのポート番号（通常は1521）
+- **サービス名/SID**: データベースのサービス名またはSID
+- **ユーザー名**: 接続するユーザー名
+- **パスワード**: パスワード
+
+入力後、「接続テスト」ボタンで接続を確認します。
+
+### 2. オブジェクト選択
+
+「オブジェクト選択」タブで、コピーするオブジェクトを選択します。
+
+#### オブジェクトタイプとオプション
+
+1. **オブジェクトタイプを選択**: （テーブル、ビュー、プロシージャ等）
+2. **コピーオプション**:
+   - 「コピー前にターゲットのオブジェクトを削除 (DROP)」: 
+     - **テーブル/ビュー**: チェックすると、コピー前にターゲット側の同名オブジェクトを削除します
+     - **その他のオブジェクト（プロシージャ、ファンクション、パッケージ等）**: このオプションにかかわらず常にドロップされます。これにより、プロシージャやパッケージの依存関係や定義の変更に対応できます
+   - 「エラーが発生しても続行」: エラー発生時も処理を継続します
+   - 「コピー前に差分を確認する」: チェックすると、実際のコピー前にソースと対象DB間のオブジェクト差分を確認するウィンドウを表示します（新規作成、既存、重複をカテゴリ分けして表示）。大量のオブジェクトをコピーする場合は、チェックを外すとスキップして高速に実行できます
+
+#### ワイルドカードフィルタ（DBからの取得時）
+
+オブジェクト名をパターンでフィルタリングできます。Oracle LIKE形式のワイルドカードを使用：
+
+- **`%`**: 任意の文字列（0文字以上）
+- **`_`**: 任意の1文字
+
+**例**:
+- `USER_%` - USER_で始まるオブジェクト
+- `%_TMP` - _TMPで終わるオブジェクト
+- `TEST%` - TESTで始まるオブジェクト
+- `USER_%, ORDER_%` - 複数指定（カンマ区切り）
+
+パターンを入力後、「フィルタして一覧を取得」ボタンをクリックします。
+
+#### オブジェクト一覧と個別選択
+
+フィルタ結果が表形式で表示されます：
+
+| ✓ | オブジェクト名 | 種類 | 作成日 | 更新日 |
+|---|------------|------|----------|----------|
+| ☑ | USER_TABLE1 | TABLE | 2025-01-15 10:30:00 | 2025-02-20 14:25:30 |
+| ☐ | USER_TABLE2 | TABLE | 2025-01-20 09:15:00 | 2025-02-21 11:40:15 |
+
+**操作**:
+- **チェックボックスをクリック**: 個別にコピー対象を選択/解除
+- **「すべて選択」**: 表示されているすべてのオブジェクトを選択
+- **「すべて解除」**: すべての選択を解除
+- **表示フィルタ**: 一覧の表示だけを絞り込み（コピー対象には影響なし）
+
+※ 実際のコピーはチェックが付いたオブジェクトのみが対象となります。
+
+#### オブジェクト名フィルタ（ワイルドカード）
+
+特定のパターンに一致するオブジェクトのみをコピーしたい場合、ワイルドカードフィルタを使用できます。
+
+**使用例:**
+
+- `USER_%` - USER_で始まるオブジェクトのみ
+- `%_TMP` - _TMPで終わるオブジェクトのみ
+- `TEST%` - TESTで始まるオブジェクトのみ
+- `%TEST%` - TESTを含むオブジェクトのみ
+- `USER_%, TEMP_%` - 複数パターン（カンマ区切り）
+
+**パターン記法（Oracle LIKE 演算子に準拠）:**
+
+- `%` - 任意の文字列（0文字以上）
+- `_` - 任意の1文字
+- 大文字小文字は区別されません
+
+フィルタ欄を空白にすると、全てのオブジェクトが対象になります。
+
+### 3. 実行
+
+「実行とログ」タブで、以下の操作が可能です：
+
+#### コピー実行
+- **「コピー実行」ボタン**: オブジェクトのコピーを開始します
+  - 実行状況がログに表示されます
+  - 進捗率がプログレスバーとテキストで表示されます（●●個中 ●●個完了）
+  - 処理が完了すると、成功/失敗の件数が表示されます
+
+#### ドライランモード
+- **「ドライラン」ボタン**: 本番実行前に検証を行えます
+  - 実際のDDLは実行せず、実行予定を表示
+  - 「[DRY-RUN]」というマークで検証モードを示します
+  - エラーチェックや依存関係の確認が可能
+  - 本番環境へのコピー前に安全性を確認できます
+
+#### その他の機能
+- **「ログをクリア」ボタン**: ログをすべて削除
+- **「エラーのみ表示」ボタン**: 実行中に発生したエラーメッセージのみを一覧表示
+  - 大量のオブジェクト処理時にエラーを効率的に確認できます
+  - エラーメッセージをコピーボタンでクリップボードにコピー可能
+
+## ログファイル
+
+実行ログは `db_copy_tool_YYYYMMDD.log` ファイルに保存されます。
+
+## 使用例
+
+### 例1: 全てのテーブルとビューをコピー
+
+1. 「接続設定」タブでソースとターゲットDBを設定、接続テストを実行
+2. 「オブジェクト選択」タブで「テーブル」と「ビュー」にチェック
+3. ワイルドカード欄は空白のまま
+4. 「フィルタして一覧を取得」をクリック
+5. すべてのオブジェクトが選択されていることを確認
+6. 「実行とログ」タブで「コピー実行」をクリック
+
+### 例2: USER_で始まるテーブルのみコピー
+
+1. 「接続設定」タブでソースとターゲットDBを設定、接続テストを実行
+2. 「オブジェクト選択」タブで「テーブル」にチェック
+3. ワイルドカード欄に `USER_%` と入力
+4. 「フィルタして一覧を取得」をクリック（USER_で始まるテーブルのみ表示される）
+5. コピーしたいオブジェクトのチェックボックスを確認・調整
+6. 「実行とログ」タブで「コピー実行」をクリック
+
+### 例3: 特定のオブジェクトのみを選択してコピー
+
+1. 「接続設定」タブでソースとターゲットDBを設定、接続テストを実行
+2. 「オブジェクト選択」タブで必要なオブジェクトタイプにチェック
+3. 「フィルタして一覧を取得」をクリック
+4. 一覧から不要なオブジェクトのチェックを外す
+5. 表示フィルタを使って特定のオブジェクトを見つけやすくする（オプション）
+6. 「実行とログ」タブで「コピー実行」をクリック
+
+### 例4: 複数パターンでコピー
+
+1. 「接続設定」タブでソースとターゲットDBを設定、接続テストを実行
+2. 「オブジェクト選択」タブでオブジェクトタイプを選択
+3. ワイルドカード欄に複数パターンを入力: `USER_%, ORDER_%, PROD_%`
+4. 「フィルタして一覧を取得」をクリック
+5. 必要に応じて個別に選択を調整
+6. 「実行とログ」タブで「コピー実行」をクリック
+
+1. 「接続設定」タブでソースとターゲットDBを設定
+2. 「オブジェクト選択」タブで必要なオブジェクトタイプにチェック
+3. ワイルドカード欄に `USER_%, CUSTOMER_%, ORDER_%` と入力
+4. 「コピー実行」をクリック
+
+## 注意事項
+
+### セキュリティ
+
+- パスワードは平文で扱われます。セキュアな環境で使用してください
+- 設定ファイルにパスワードを保存する場合は、ファイルの権限に注意してください
+
+### データベース権限
+
+コピーを実行するユーザーには、以下の権限が必要です:
+
+**ソースDB（コピー元）**:
+- オブジェクトの SELECT 権限
+- DBMS_METADATA パッケージの EXECUTE 権限
+
+**ターゲットDB（コピー先）**:
+- オブジェクトの CREATE 権限（CREATE TABLE, CREATE PROCEDURE など）
+- オブジェクトの DROP 権限（DROP オプション使用時）
+
+### テーブルデータ
+
+このツールは**オブジェクトの構造（DDL）のみをコピー**します。テーブルのデータはコピーされません。
+
+データもコピーする場合は、別途 Data Pump や SQL*Loader などを使用してください。
+
+### 依存関係
+
+オブジェクトに依存関係がある場合、コピーの順序に注意してください。例えば:
+
+1. テーブル（親テーブル → 子テーブル）
+2. シーケンス
+3. ビュー
+4. プロシージャ/ファンクション
+5. パッケージ
+6. トリガー
+
+## トラブルシューティング
+
+### 接続エラー
+
+- ホスト、ポート、サービス名が正しいか確認
+- ネットワーク接続を確認
+- ファイアウォールの設定を確認
+- Oracle Listenerが起動しているか確認
+
+### コピーエラー
+
+- ユーザーに必要な権限があるか確認
+- ターゲットDBに同名のオブジェクトが存在する場合、「DROP」オプションを有効にする
+- ログファイルで詳細なエラーメッセージを確認
+
+### exe実行時のエラー
+
+- Windows Defender などのアンチウイルスソフトが実行をブロックしている可能性があります
+- 管理者権限で実行してみてください
+
+## ライセンス
+
+このツールは内部使用を目的としています。
+
+## 開発者向け情報
 
 ### ファイル構成
 
 ```
-python/
-├── oracle.py          # メインアプリケーション（SQLファイル一括実行）
-├── config.yaml        # 接続設定ファイルのサンプル
-├── requirements.txt   # 必要なPythonパッケージ
-└── sql/               # 実行するSQLファイルを格納するディレクトリ（例）
-    ├── 01_create.sql
-    └── 02_insert.sql
+db_copy_tool/
+├── db_copy_gui.py          # GUIメインプログラム
+├── db_manager.py           # データベース接続・管理モジュール
+├── tnsnames_parser.py      # tnsnames.ora パーサー
+├── db_copy_tool.spec       # PyInstaller設定ファイル
+├── requirements.txt        # 必要なパッケージ
+├── config_sample.yaml      # 設定ファイルのサンプル
+├── tnsnames_sample.ora     # tnsnames.ora のサンプル
+├── build_db_copy_tool.bat  # ビルド用バッチファイル
+├── test_wildcard.py        # ワイルドカードフィルタのテスト
+├── README.md               # このファイル
+└── QUICKSTART.md           # クイックスタートガイド
+```
+├── config_sample.yaml      # 設定ファイルのサンプル
+├── build_db_copy_tool.bat  # ビルド用バッチファイル
+└── README.md               # このファイル
 ```
 
-### セットアップ
+### カスタマイズ
 
-```powershell
-# 依存パッケージのインストール
-pip install -r requirements.txt
-```
+- `db_manager.py` の `get_object_ddl()` メソッドを変更して、DDL取得ロジックをカスタマイズ可能
+- `tnsnames_parser.py` で tnsnames.ora の解析ロジックをカスタマイズ可能
+- `db_copy_gui.py` でUIをカスタマイズ可能
+- `db_copy_tool.spec` でビルドオプションを変更可能
 
-### 設定ファイル（config.yaml）の編集
+### バグ報告・機能要望
 
-```yaml
-database:
-  host: localhost         # ホスト名
-  port: 1521              # ポート番号
-  service_name: ORCL      # サービス名（または sid: ORCL）
-  user: your_username     # ユーザー名
-  password: your_password # パスワード
-```
-
-### コマンドライン引数
-
-| 引数 | 説明 | デフォルト |
-|------|------|----------|
-| `--config` | YAML設定ファイルのパス（必須） | - |
-| `--sql-dir` | SQLファイルが格納されているディレクトリ（必須） | - |
-| `--error-mode` | エラー時の動作: `stop`（確認後継続/中断）または `continue`（スキップ） | `stop` |
-| `--autocommit` | 自動コミット: `true` または `false` | `true` |
-| `--log-dir` | ログファイル出力先ディレクトリ | `./logs` |
-
-### 使用例
-
-```bash
-# 基本的な使用方法（エラー時中断、自動コミット有効）
-python oracle.py --config config.yaml --sql-dir ./sql
-
-# エラーを無視して続行、自動コミット無効
-python oracle.py --config config.yaml --sql-dir ./sql --error-mode continue --autocommit false
-
-# ログ出力先を指定
-python oracle.py --config config.yaml --sql-dir ./sql --log-dir ./my_logs
-```
-
-### ログ出力
-
-- ログは標準出力とファイルの両方に出力されます。
-- ログファイル名: `logs/oracle_execution_YYYYMMDD_HHMMSS.log`
-- 各SQLファイルの実行結果（成功/失敗）、エラーメッセージ、実行開始・終了時刻を記録します。
-
-### エラーハンドリング
-
-- **中断モード（`--error-mode stop`）**: エラー発生時にユーザーへ継続/終了を確認します。
-- **無視モード（`--error-mode continue`）**: エラーをログに記録して次のファイルへ進みます。
-- エラー発生時は自動的にロールバックを実行します。
-
----
-
-APPSプロジェクトを参考に作成したPython版Oracle接続アプリケーションです。
-
-## プロジェクト構成
-
-```
-oracleConnect/
-├── config/                  # 設定ファイル
-│   ├── config.yaml         # メイン設定
-│   └── config-dev.yaml     # 開発環境用設定
-├── src/
-│   ├── database/
-│   │   └── oracle_client.py    # Oracle接続クライアント
-│   └── config/
-│       └── database_config.py  # 設定管理
-├── examples/
-│   └── sample_app.py       # サンプルアプリケーション
-└── requirements.txt        # 依存パッケージ
-```
-
-## 主な機能
-
-- **接続プーリング**: 効率的なデータベース接続管理
-- **CRUD操作**: SELECT, INSERT, UPDATE, DELETE操作のサポート
-- **バッチ処理**: 複数レコードの一括処理
-- **設定管理**: YAMLファイルまたは環境変数での設定
-- **エラーハンドリング**: トランザクション管理とロールバック
-- **複数データベース対応**: 複数のOracle DBを同時に管理
-- **スキーマ切り替え**: 動的にスキーマを切り替えて実行
-- **接続マネージャー**: データベース接続の一元管理
-
-## セットアップ
-
-### 1. 仮想環境の作成と有効化
-
-```powershell
-# 仮想環境作成
-python -m venv .venv
-
-# 仮想環境有効化
-.venv\Scripts\Activate.ps1
-```
-
-### 2. 依存パッケージのインストール
-
-```powershell
-pip install -r requirements.txt
-```
-
-### 3. データベース設定
-
-`config/config.yaml` を編集して、Oracle接続情報を設定します:
-
-#### 複数データベース設定
-
-```yaml
-databases:
-  # デフォルトのデータベース
-  default:
-    user: jx
-    password: jx
-    host: localhost
-    port: 1521
-    service_name: jx
-    schema: jx  # 省略可能
-    min_pool_size: 1
-    max_pool_size: 10
-    increment: 1
-
-  # 開発用データベース
-  dev:
-    user: jx_dev
-    password: jx_dev
-    host: localhost
-    port: 1521
-    service_name: jx
-    schema: jx_dev
-    min_pool_size: 1
-    max_pool_size: 5
-    increment: 1
-```
-
-#### 環境変数での設定
-
-```powershell
-# デフォルトDB
-$env:ORACLE_USER = "jx"
-$env:ORACLE_PASSWORD = "jx"
-$env:ORACLE_HOST = "localhost"
-$env:ORACLE_PORT = "1521"
-$env:ORACLE_SERVICE_NAME = "jx"
-$env:ORACLE_SCHEMA = "jx"
-
-# 開発用DB（プレフィックスを変更）
-$env:ORACLE_DEV_USER = "jx_dev"
-$env:ORACLE_DEV_PASSWORD = "jx_dev"
-```
-
-## 使用方法
-
-### サンプルアプリケーションの実行
-
-#### 基本的なCRUD操作
-```powershell
-python examples/sample_app.py
-```
-
-#### 複数データベース/スキーマ切り替え
-```powershell
-python examples/multi_database_app.py
-```
-
-### プログラムでの使用例
-
-#### 1. 単一データベース接続
-
-```python
-from src.database.oracle_client import OracleClient
-from src.config.database_config import DatabaseConfig
-
-# 設定の読み込み
-config = DatabaseConfig.from_yaml("config/config.yaml", "default")
-
-# クライアントの作成
-with OracleClient(
-    user=config.user,
-    password=config.password,
-    host=config.host,
-    port=config.port,
-    service_name=config.service_name,
-    schema=config.schema,
-) as client:
-    # SELECT クエリ
-    results = client.execute_query("SELECT * FROM your_table")
-    
-    # スキーマを指定してクエリ実行
-    results = client.execute_query(
-        "SELECT * FROM your_table",
-        schema="other_schema"
-    )
-```
-
-#### 2. 複数データベース管理
-
-```python
-from src.database.connection_manager import ConnectionManager
-
-# 複数データベースの管理
-with ConnectionManager() as manager:
-    # 設定ファイルから全DB読み込み
-    manager.load_from_yaml("config/config.yaml")
-    
-    # デフォルトDBで実行
-    client = manager.get_client()
-    results = client.execute_query("SELECT * FROM table1")
-    
-    # データベースを切り替え
-    manager.switch_database("dev")
-    client = manager.get_client()
-    results = client.execute_query("SELECT * FROM table2")
-    
-    # 特定のDBを直接指定
-    client = manager.get_client("test")
-    results = client.execute_query("SELECT * FROM table3")
-```
-
-#### 3. スキーマの動的切り替え
-
-```python
-from src.database.oracle_client import OracleClient
-
-with OracleClient(user="jx", password="jx", service_name="jx") as client:
-    # デフォルトスキーマで実行
-    client.execute_query("SELECT * FROM table1")
-    
-    # スキーマを変更
-    client.set_schema("other_schema")
-    client.execute_query("SELECT * FROM table2")
-    
-    # クエリごとにスキーマ指定
-    client.execute_query("SELECT * FROM table3", schema="temp_schema")
-```
-
-## APPSプロジェクトとの対応
-
-このプロジェクトは、以下のAPPSプロジェクトの設計を参考にしています:
-
-### データベース接続設定
-- APPS: `back/jx_online/src/main/resources/application.yaml`
-- Python: `config/config.yaml`
-
-### 接続クライアント
-- APPS: Doma2 + Oracle UCP (Universal Connection Pool)
-- Python: python-oracledb + 接続プーリング
-
-### 設定管理
-- APPS: Spring Boot の環境変数 + application.yaml
-- Python: 環境変数 + config.yaml
-
-## ベストプラクティス
-
-### PEP8準拠
-- 全コードはPEP8スタイルガイドに準拠
-- Black フォーマッターで自動整形可能
-
-### 型ヒント
-- すべての関数とメソッドに型ヒントを使用
-- mypy による静的型チェック対応
-
-### エラーハンドリング
-- 適切な例外処理とロールバック機能
-- ログ出力による追跡可能性
-
-### セキュリティ
-- パスワードはログに出力しない
-- 環境変数での機密情報管理をサポート
-
-## トラブルシューティング
-
-### 接続エラーが発生する場合
-
-1. Oracleデータベースが起動しているか確認
-2. 接続情報（ホスト、ポート、サービス名）が正しいか確認
-3. ユーザー名とパスワードが正しいか確認
-4. ファイアウォール設定を確認
-
-### パッケージのインポートエラー
-
-```powershell
-# 仮想環境を再作成
-Remove-Item -Recurse -Force .venv
-python -m venv .venv
-.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-```
-
-## 開発ツール
-
-### コードフォーマット
-
-```powershell
-black src/ examples/
-```
-
-### リンター
-
-```powershell
-flake8 src/ examples/
-pylint src/ examples/
-```
-
-### 型チェック
-
-```powershell
-mypy src/ examples/
-```
-
-### テスト実行
-
-```powershell
-pytest tests/ -v --cov=src
-```
-
-## 実行ファイル（EXE）の作成
-
-### クイックビルド
-
-```powershell
-# ビルドスクリプトを実行
-.\build.bat
-```
-
-### 配布パッケージの作成
-
-```powershell
-# 配布用ZIPファイルを作成
-.\create_package.bat
-```
-
-### 手動ビルド
-
-```powershell
-# PyInstallerでビルド
-pyinstaller ImageEntryGUI3.spec --clean
-```
-
-詳細は[BUILD_INSTRUCTIONS.md](BUILD_INSTRUCTIONS.md)を参照してください。
-
-### 成果物
-
-- `dist\ImageEntryGUI3.exe` - ワンファイル版実行ファイル（約50MB）
-- `dist\ImageEntryGUI3\` - ワンフォルダ版（高速起動）
-
-## ライセンス
-
-Copyright (c) 2025 Oracle Connect Project.
-
-## 参考資料
-
-- [python-oracledb ドキュメント](https://python-oracledb.readthedocs.io/)
-- [Oracle Database SQL言語リファレンス](https://docs.oracle.com/en/database/)
-- [PEP 8 -- Style Guide for Python Code](https://www.python.org/dev/peps/pep-0008/)
+問題が発生した場合や機能要望がある場合は、開発チームに連絡してください。
