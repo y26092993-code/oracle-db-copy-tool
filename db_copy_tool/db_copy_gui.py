@@ -524,6 +524,8 @@ class DBCopyToolGUI:
 
         # チェックボックスのクリックイベント
         self.object_tree.bind("<Button-1>", self._on_tree_click)
+        self.object_tree.bind("<Shift-Button-1>", self._on_tree_shift_click)
+        self.object_tree.bind("<space>", self._on_tree_space)
 
         # ソート状態管理
         self.object_tree_sort_state: Dict[str, bool] = {}
@@ -531,6 +533,7 @@ class DBCopyToolGUI:
         # オブジェクトデータを保持（フィルタ用）
         self.all_objects: List[DatabaseObject] = []
         self.object_check_states: Dict[str, bool] = {}  # オブジェクトIDごとのチェック状態
+        self._last_clicked_item: Optional[str] = None  # 範囲選択の起点
 
     def _create_execution_tab(self) -> None:
         """実行とログタブを作成。"""
@@ -794,6 +797,11 @@ class DBCopyToolGUI:
                 )
             )
 
+    def _toggle_check(self, item: str, state: bool) -> None:
+        """指定アイテムのチェック状態を設定して表示を更新。"""
+        self.object_check_states[item] = state
+        self.object_tree.item(item, text="☑" if state else "☐")
+
     def _on_tree_click(self, event) -> None:
         """Treeviewのクリックイベント処理（チェックボックストグル）。
         
@@ -806,15 +814,51 @@ class DBCopyToolGUI:
             # チェックボックス列がクリックされた
             item = self.object_tree.identify_row(event.y)
             if item:
-                # チェック状態をトグル
-                obj_id = item
-                current_state = self.object_check_states.get(obj_id, True)
+                current_state = self.object_check_states.get(item, True)
                 new_state = not current_state
-                self.object_check_states[obj_id] = new_state
-                
-                # 表示を更新
-                check_mark = "☑" if new_state else "☐"
-                self.object_tree.item(item, text=check_mark)
+                self._toggle_check(item, new_state)
+                self._last_clicked_item = item
+
+    def _on_tree_shift_click(self, event) -> None:
+        """Shift+クリックで範囲内のアイテムを一括チェック/解除。"""
+        region = self.object_tree.identify("region", event.x, event.y)
+        if region != "tree":
+            return
+        item = self.object_tree.identify_row(event.y)
+        if not item:
+            return
+
+        all_items = list(self.object_tree.get_children(""))
+        if not self._last_clicked_item or self._last_clicked_item not in all_items:
+            # 起点がなければ単独トグル
+            self._toggle_check(item, not self.object_check_states.get(item, True))
+            self._last_clicked_item = item
+            return
+
+        # 起点～終点の範囲を決定
+        idx_start = all_items.index(self._last_clicked_item)
+        idx_end = all_items.index(item)
+        if idx_start > idx_end:
+            idx_start, idx_end = idx_end, idx_start
+        range_items = all_items[idx_start : idx_end + 1]
+
+        # 起点のチェック状態（最後にクリックした状態）を範囲全体に適用
+        target_state = self.object_check_states.get(self._last_clicked_item, True)
+        for iid in range_items:
+            self._toggle_check(iid, target_state)
+
+    def _on_tree_space(self, event) -> None:
+        """スペースキーでTreeview選択行のチェックをトグル。"""
+        selected = self.object_tree.selection()
+        if not selected:
+            return
+        # 選択行の多数決でトグル方向を決定
+        checked_count = sum(1 for iid in selected if self.object_check_states.get(iid, True))
+        new_state = checked_count < len(selected) / 2 + 1  # 過半数がチェック済みなら解除
+        for iid in selected:
+            self._toggle_check(iid, new_state)
+        if selected:
+            self._last_clicked_item = selected[-1]
 
     def _select_all_objects(self) -> None:
         """すべてのオブジェクトを選択。"""
@@ -1325,7 +1369,7 @@ class DBCopyToolGUI:
         pane = ttk.PanedWindow(win, orient=tk.HORIZONTAL)
         pane.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
 
-        def _make_pane(title: str) -> scrolledtext.ScrolledText:
+        def _make_pane(title: str):
             outer = ttk.LabelFrame(pane, text=title)
             pane.add(outer, weight=1)
             txt = scrolledtext.ScrolledText(
@@ -1337,10 +1381,49 @@ class DBCopyToolGUI:
             hsb.pack(side=tk.BOTTOM, fill=tk.X)
             txt.configure(xscrollcommand=hsb.set)
             txt.pack(fill=tk.BOTH, expand=True)
-            return txt
+            return txt, hsb
 
-        src_text = _make_pane("ソース")
-        tgt_text = _make_pane("ターゲット")
+        src_text, src_hsb = _make_pane("ソース")
+        tgt_text, tgt_hsb = _make_pane("ターゲット")
+
+        # 縦・横スクロール同期
+        _syncing_y = False
+        _syncing_x = False
+
+        def _on_src_yscroll(*args):
+            nonlocal _syncing_y
+            src_text.vbar.set(*args)
+            if not _syncing_y:
+                _syncing_y = True
+                tgt_text.yview_moveto(args[0])
+                _syncing_y = False
+
+        def _on_tgt_yscroll(*args):
+            nonlocal _syncing_y
+            tgt_text.vbar.set(*args)
+            if not _syncing_y:
+                _syncing_y = True
+                src_text.yview_moveto(args[0])
+                _syncing_y = False
+
+        def _on_src_xscroll(*args):
+            nonlocal _syncing_x
+            src_hsb.set(*args)
+            if not _syncing_x:
+                _syncing_x = True
+                tgt_text.xview_moveto(args[0])
+                _syncing_x = False
+
+        def _on_tgt_xscroll(*args):
+            nonlocal _syncing_x
+            tgt_hsb.set(*args)
+            if not _syncing_x:
+                _syncing_x = True
+                src_text.xview_moveto(args[0])
+                _syncing_x = False
+
+        src_text.config(yscrollcommand=_on_src_yscroll, xscrollcommand=_on_src_xscroll)
+        tgt_text.config(yscrollcommand=_on_tgt_yscroll, xscrollcommand=_on_tgt_xscroll)
 
         # 差分のハイライト色
         for t in (src_text, tgt_text):
